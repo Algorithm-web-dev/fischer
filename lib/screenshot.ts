@@ -6,6 +6,7 @@ export interface ViewportShot {
   width: number
   height: number
   base64: string // no data: prefix — ready to drop into an Anthropic image content block
+  mediaType?: string // set for manual uploads; auto-captures are always JPEG
 }
 
 export interface ScreenshotResult {

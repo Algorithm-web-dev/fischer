@@ -325,7 +325,7 @@ export async function runFischerAudit(
   input: AuditInput,
   scraped: ScrapedContent | null,
   scrapeError?: string,
-  screenshots?: { viewport: 'desktop' | 'mobile'; base64: string }[],
+  screenshots?: { viewport: 'desktop' | 'mobile'; base64: string; mediaType?: string }[],
   pagespeed?: { mobile: PageSpeedResult; desktop: PageSpeedResult },
   ga4Data?: GA4AuditData,
   clarityData?: { data: ClarityPageData; isPageLevel: boolean },
@@ -351,7 +351,11 @@ export async function runFischerAudit(
       content.push({ type: 'text', text: `Screenshot below is the ${shot.viewport} above-the-fold view:` })
       content.push({
         type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: shot.base64 }
+        source: {
+          type: 'base64',
+          media_type: (shot.mediaType ?? 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+          data: shot.base64
+        }
       })
     }
   }
@@ -360,12 +364,16 @@ export async function runFischerAudit(
 
   const response = await anthropic.messages.create({
     model: FISCHER_MODEL,
-    max_tokens: 4096,
+    max_tokens: 16000,
     system: FISCHER_SYSTEM_PROMPT,
     messages: [{ role: 'user', content }],
     tools: [AUDIT_TOOL_SCHEMA],
     tool_choice: { type: 'tool', name: 'submit_fischer_audit' }
   })
+
+  if (response.stop_reason === 'max_tokens') {
+    throw new Error('Fischer output was truncated before the audit completed - raise max_tokens.')
+  }
 
   const toolUse = response.content.find(
     (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
@@ -375,5 +383,14 @@ export async function runFischerAudit(
     throw new Error('Fischer did not return a structured audit — no tool_use block in response.')
   }
 
-  return toolUse.input as AuditResult
+  const result = toolUse.input as AuditResult
+
+  if (!Array.isArray(result.frictionPoints) || result.frictionPoints.length === 0) {
+    throw new Error('Fischer returned an audit with no friction points - output was incomplete.')
+  }
+  if (!result.revenueImpact || typeof result.fischerScore !== 'number') {
+    throw new Error('Fischer returned an incomplete audit - missing revenue impact or score.')
+  }
+
+  return result
 }

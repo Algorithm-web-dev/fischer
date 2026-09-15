@@ -112,15 +112,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (input.manualScreenshotDesktop) {
+      const desktopUpload = parseDataUrl(input.manualScreenshotDesktop)
       screenshotResult.shots.push({
         viewport: 'desktop', width: 1440, height: 900,
-        base64: stripDataPrefix(input.manualScreenshotDesktop)
+        base64: desktopUpload.data, mediaType: desktopUpload.mediaType
       })
     }
     if (input.manualScreenshotMobile) {
+      const mobileUpload = parseDataUrl(input.manualScreenshotMobile)
       screenshotResult.shots.push({
         viewport: 'mobile', width: 375, height: 812,
-        base64: stripDataPrefix(input.manualScreenshotMobile)
+        base64: mobileUpload.data, mediaType: mobileUpload.mediaType
       })
     }
     screenshotResult.success = screenshotResult.shots.length > 0
@@ -191,7 +193,7 @@ export async function POST(req: NextRequest) {
       input,
       scrapeResult.success ? scrapeResult.content! : null,
       scrapeResult.error,
-      screenshotResult.shots.map(s => ({ viewport: s.viewport, base64: s.base64 })),
+      screenshotResult.shots.map(s => ({ viewport: s.viewport, base64: s.base64, mediaType: s.mediaType })),
       pagespeed,
       ga4Data || undefined,
       clarityResult?.success && clarityResult.data
@@ -258,9 +260,10 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-function stripDataPrefix(base64: string): string {
-  const commaIndex = base64.indexOf(',')
-  return base64.startsWith('data:') && commaIndex !== -1 ? base64.slice(commaIndex + 1) : base64
+function parseDataUrl(input: string): { data: string; mediaType: string } {
+  const match = /^data:([^;,]+)[^,]*,([\s\S]*)$/.exec(input)
+  if (!match) return { data: input, mediaType: 'image/jpeg' }
+  return { data: match[2], mediaType: match[1] }
 }
 
 async function uploadScreenshots(
