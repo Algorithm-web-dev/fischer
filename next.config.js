@@ -4,7 +4,8 @@ const nextConfig = {
     serverComponentsExternalPackages: [
       '@anthropic-ai/sdk',
       '@sparticuz/chromium',
-      'puppeteer-core'
+      'puppeteer-core',
+      '@google-analytics/data'
     ]
   }
 }

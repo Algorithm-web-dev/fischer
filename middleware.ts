@@ -4,8 +4,15 @@ import { NextRequest, NextResponse } from 'next/server'
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Always allow the login page and auth API — everything else requires a session
-  if (pathname === '/' || pathname === '/api/auth') {
+  // Public: login page, auth API, client report links (token-protected) and
+  // cron routes (protected by CRON_SECRET inside the route — they have no
+  // user session, so redirecting them to login would silently stop every job).
+  if (
+    pathname === '/' ||
+    pathname === '/api/auth' ||
+    pathname.startsWith('/report/') ||
+    pathname.startsWith('/api/cron/')
+  ) {
     return NextResponse.next()
   }
 
@@ -38,6 +45,10 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
+    // API callers get a JSON 401 rather than an HTML redirect
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+    }
     return NextResponse.redirect(new URL('/', request.url))
   }
 

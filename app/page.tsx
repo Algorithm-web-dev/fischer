@@ -23,7 +23,7 @@ export default function LoginPage() {
     const data = await res.json()
 
     if (res.ok) {
-      router.push('/audit')
+      router.push('/clients')
     } else {
       setError(data.error || 'Login failed.')
       setLoading(false)

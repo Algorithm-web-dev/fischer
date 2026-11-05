@@ -131,6 +131,8 @@ export function parseHtml(html: string, url: string): ScrapedContent {
     }
   })
 
+  // Separate adjacent elements so "Home" + "Contact" doesn't become "HomeContact"
+  $('p, div, li, a, button, label, h1, h2, h3, h4, h5, h6, td, th, section, header, footer, nav, option, br, span').after(' ')
   const bodyText = $('body').text().replace(/\s+/g, ' ').trim()
   const wordCount = bodyText.split(' ').filter(Boolean).length
   const imageCount = $('img').length

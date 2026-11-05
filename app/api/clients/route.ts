@@ -55,14 +55,18 @@ export async function POST(req: NextRequest) {
       clarity_api_token: body.clarityApiToken ?? null,
       industry: body.industry ?? null,
       avg_order_value: body.avgOrderValue ?? null,
-      currency: body.currency ?? 'ZAR'
+      currency: body.currency ?? 'ZAR',
+      ga4_conversion_event: body.ga4ConversionEvent ?? null,
+      report_logo_url: body.reportLogoUrl ?? null,
+      report_contact_name: body.reportContactName ?? null,
+      report_contact_email: body.reportContactEmail ?? null
     })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ client: data })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null } })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -84,10 +88,14 @@ export async function PATCH(req: NextRequest) {
   if (body.croHoursMonthly !== undefined) updates.cro_hours_monthly = body.croHoursMonthly
   if (body.ga4PropertyId !== undefined) updates.ga4_property_id = body.ga4PropertyId
   if (body.clarityProjectId !== undefined) updates.clarity_project_id = body.clarityProjectId
-  if (body.clarityApiToken !== undefined) updates.clarity_api_token = body.clarityApiToken
+  if (body.clarityApiToken !== undefined && !String(body.clarityApiToken).startsWith('••••')) updates.clarity_api_token = body.clarityApiToken || null
   if (body.industry !== undefined) updates.industry = body.industry
   if (body.avgOrderValue !== undefined) updates.avg_order_value = body.avgOrderValue
   if (body.currency !== undefined) updates.currency = body.currency
+  if (body.ga4ConversionEvent !== undefined) updates.ga4_conversion_event = body.ga4ConversionEvent || null
+  if (body.reportLogoUrl !== undefined) updates.report_logo_url = body.reportLogoUrl || null
+  if (body.reportContactName !== undefined) updates.report_contact_name = body.reportContactName || null
+  if (body.reportContactEmail !== undefined) updates.report_contact_email = body.reportContactEmail || null
 
   const { data, error } = await supabase
     .from('clients')
@@ -98,5 +106,5 @@ export async function PATCH(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ client: data })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null } })
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { runCompetitorAudit, estimateTraffic, synthesizeMarketShare } from '@/lib/marketshare'
 
-export const maxDuration = 90
+export const maxDuration = 300
 
 interface MarketShareRequestBody {
   clientId: string

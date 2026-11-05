@@ -35,10 +35,10 @@ export async function POST(req: NextRequest) {
     client_id: clientId,
     source_audit_id: auditId,
     title: fp.title,
-    description: `${fp.issue}\n\nWhy it matters: ${fp.whyItKillsConversion}\n\nFix: ${fp.fix}`,
+    description: `${fp.issue}\n\nEvidence: ${fp.evidence}\n\nWhy it matters: ${fp.whyItKillsConversion}\n\nFix: ${fp.fix}`,
     tier: 'watching' as const,
-    evidence_type: 'quant' as const,
-    evidence_refs: { source: 'fischer_audit', audit_id: auditId, location: fp.location },
+    evidence_type: evidenceType(fp.evidenceSources ?? []),
+    evidence_refs: { source: 'fischer_audit', audit_id: auditId, location: fp.location, sources: fp.evidenceSources, confidence: fp.confidence },
     severity: fp.severity,
     ice_impact: fp.severity === 'high' ? 8 : fp.severity === 'medium' ? 5 : 3
   }))
@@ -48,4 +48,11 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ created: data.length, items: data })
+}
+
+/** Clarity = qualitative (behaviour), GA4/PageSpeed = quantitative. */
+function evidenceType(sources: string[]): 'quant' | 'qual' | 'both' {
+  const qual = sources.includes('clarity')
+  const quant = sources.some(s => s === 'ga4' || s === 'pagespeed' || s === 'layout_measurements')
+  return qual && quant ? 'both' : qual ? 'qual' : 'quant'
 }

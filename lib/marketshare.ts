@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { anthropic, FISCHER_MODEL } from './claude'
-import { scrapePage } from './scraper'
+import { z } from 'zod'
+import { structuredCall, webSearchCall } from './llm'
+import { capturePage } from './capture'
 import type { ScrapedContent } from './scraper'
 
 // ============================================================
@@ -20,34 +20,25 @@ export interface CompetitorAuditResult {
   topFrictionPoints: CompetitorFrictionPoint[]
 }
 
-const COMPETITOR_TOOL_SCHEMA = {
-  name: 'submit_competitor_audit',
-  description: 'Submit the lightweight comparative CRO audit for this competitor.',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      fischerScore: { type: 'integer', minimum: 1, maximum: 100 },
-      rating: { type: 'string', enum: ['Critical', 'Poor', 'Average', 'Good', 'Excellent'] },
-      topFrictionPoints: {
-        type: 'array', minItems: 3, maxItems: 5,
-        items: {
-          type: 'object',
-          properties: {
-            title: { type: 'string' },
-            severity: { type: 'string', enum: ['high', 'medium', 'low'] }
-          },
-          required: ['title', 'severity']
-        }
-      }
-    },
-    required: ['fischerScore', 'rating', 'topFrictionPoints']
-  }
-}
+const CompetitorSchema = z.object({
+  fischerScore: z.number().describe('1-100'),
+  rating: z.enum(['Critical', 'Poor', 'Average', 'Good', 'Excellent']),
+  topFrictionPoints: z.array(z.object({
+    title: z.string(),
+    severity: z.enum(['high', 'medium', 'low'])
+  })).describe('Top 3-5, evidence-based only.')
+})
 
 export async function runCompetitorAudit(
   url: string
 ): Promise<{ result: CompetitorAuditResult; scraped: ScrapedContent | null; scrapeError?: string }> {
-  const scrapeResult = await scrapePage(url)
+  // Same real-browser capture as client audits (desktop only, for cost), so
+  // competitor scores are comparable with the client's own.
+  const capture = await capturePage(url, ['desktop'])
+  const scrapeResult = capture.content
+    ? { success: true as const, content: capture.content, error: undefined }
+    : { success: false as const, content: undefined, error: capture.contentError || capture.desktop.error }
+  const shots = capture.desktop.segments.slice(0, 3)
 
   const contentSection = scrapeResult.success
     ? `**PAGE CONTENT:**
@@ -64,24 +55,26 @@ export async function runCompetitorAudit(
 **COMPETITOR URL:** ${url}
 ${contentSection}
 
-Submit your assessment via the submit_competitor_audit tool.`
+Only list friction points you can see in the screenshots or text.`
 
-  const response = await anthropic.messages.create({
-    model: FISCHER_MODEL,
-    max_tokens: 1024,
-    system: 'You are Fischer — a CRO Intelligence Agent — running a fast comparative audit on a competitor page. Be concise; this is a benchmarking pass, not a full audit.',
-    messages: [{ role: 'user', content: prompt }],
-    tools: [COMPETITOR_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'submit_competitor_audit' }
+  const content = [
+    ...shots.flatMap((sh, i) => [
+      { type: 'text' as const, text: `Desktop section ${i + 1}:` },
+      { type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/jpeg' as const, data: sh.base64 } }
+    ]),
+    { type: 'text' as const, text: prompt }
+  ]
+  const result = await structuredCall({
+    schema: CompetitorSchema,
+    system: 'You are Fischer — a CRO Intelligence Agent — running a fast comparative audit on a competitor page. Be concise and evidence-based; this is a benchmarking pass, not a full audit.',
+    content,
+    maxTokens: 8000,
+    effort: 'medium'
   })
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
-  )
-  if (!toolUse) throw new Error('Competitor audit did not return a structured result.')
+  result.fischerScore = Math.max(1, Math.min(100, Math.round(result.fischerScore)))
 
   return {
-    result: toolUse.input as CompetitorAuditResult,
+    result,
     scraped: scrapeResult.success ? scrapeResult.content! : null,
     scrapeError: scrapeResult.error
   }
@@ -102,18 +95,10 @@ export interface TrafficEstimate {
 export async function estimateTraffic(url: string): Promise<TrafficEstimate> {
   const domain = new URL(url).hostname
 
-  const response = await anthropic.messages.create({
-    model: FISCHER_MODEL,
-    max_tokens: 300,
-    tools: [{ type: 'web_search_20250305', name: 'web_search' }] as any,
-    messages: [{
-      role: 'user',
-      content: `Search for estimated monthly website traffic for ${domain}. Use SimilarWeb, Semrush, or any available public traffic data. Respond with ONLY a short estimate like "50k-100k monthly visits" or "under 10k monthly visits (low confidence)" — no other commentary.`
-    }]
-  })
-
-  const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')
-  const estimate = textBlock?.text.trim() || 'Unknown'
+  const raw = await webSearchCall(
+    `Search for estimated monthly website traffic for ${domain}. Use SimilarWeb, Semrush, or any available public traffic data. End your answer with ONE line in the form "ESTIMATE: 50k-100k monthly visits" (or "ESTIMATE: Unknown").`
+  )
+  const estimate = raw.match(/ESTIMATE:\s*(.+)/i)?.[1]?.trim() || 'Unknown'
 
   return {
     monthlyVisits: estimate,
@@ -141,38 +126,12 @@ export interface MarketShareSynthesis {
   recoveryRoadmap: { step: number; description: string }[]
 }
 
-const SYNTHESIS_TOOL_SCHEMA = {
-  name: 'submit_market_share_analysis',
-  description: 'Submit the synthesised market share / competitive intelligence analysis.',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      marketPosition: { type: 'string', description: '2-3 sentences: where does the client sit in the competitive CRO landscape?' },
-      competitiveGaps: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            competitor: { type: 'string' },
-            gap: { type: 'string' },
-            revenueOpportunity: { type: 'string' }
-          },
-          required: ['competitor', 'gap', 'revenueOpportunity']
-        }
-      },
-      revenueOpportunity: { type: 'string', description: 'Overall estimated monthly revenue opportunity if the top gaps are closed.' },
-      recoveryRoadmap: {
-        type: 'array', minItems: 3, maxItems: 3,
-        items: {
-          type: 'object',
-          properties: { step: { type: 'integer' }, description: { type: 'string' } },
-          required: ['step', 'description']
-        }
-      }
-    },
-    required: ['marketPosition', 'competitiveGaps', 'revenueOpportunity', 'recoveryRoadmap']
-  }
-}
+const SynthesisSchema = z.object({
+  marketPosition: z.string().describe('2-3 sentences: where does the client sit in the competitive CRO landscape?'),
+  competitiveGaps: z.array(z.object({ competitor: z.string(), gap: z.string(), revenueOpportunity: z.string() })),
+  revenueOpportunity: z.string().describe('Overall estimated monthly revenue opportunity if the top gaps are closed.'),
+  recoveryRoadmap: z.array(z.object({ step: z.number(), description: z.string() })).describe('Exactly 3 steps.')
+})
 
 export async function synthesizeMarketShare(params: {
   clientUrl: string
@@ -188,23 +147,13 @@ export async function synthesizeMarketShare(params: {
 **COMPETITORS:**
 ${params.competitors.map(c => `- ${c.name} (${c.url}): Fischer Score ${c.score}, ~${c.traffic.monthlyVisits} (${c.traffic.confidence} confidence). Top friction: ${c.topFrictionPoints.map(f => f.title).join(', ')}`).join('\n')}
 
-Answer: where does the client sit competitively? Which specific CRO gaps are costing market share vs each competitor? What's the estimated monthly revenue opportunity if the top gaps are closed? What's a prioritised 3-step recovery roadmap?
+Answer: where does the client sit competitively? Which specific CRO gaps are costing market share vs each competitor? What's the estimated monthly revenue opportunity if the top gaps are closed? What's a prioritised 3-step recovery roadmap?`
 
-Submit via submit_market_share_analysis.`
-
-  const response = await anthropic.messages.create({
-    model: FISCHER_MODEL,
-    max_tokens: 2048,
+  return structuredCall({
+    schema: SynthesisSchema,
     system: 'You are Fischer\'s Market Intelligence layer — commercial, specific, and grounded only in the scores and data given. Do not invent competitor details beyond what was provided.',
-    messages: [{ role: 'user', content: prompt }],
-    tools: [SYNTHESIS_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'submit_market_share_analysis' }
+    content: prompt,
+    maxTokens: 8000,
+    effort: 'medium'
   })
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
-  )
-  if (!toolUse) throw new Error('Market share synthesis did not return a structured result.')
-
-  return toolUse.input as MarketShareSynthesis
 }

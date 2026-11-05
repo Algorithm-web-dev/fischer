@@ -24,3 +24,6 @@ yarn-error.log*
 .DS_Store
 *.pem
 .vercel
+
+*.tsbuildinfo
+next-env.d.ts

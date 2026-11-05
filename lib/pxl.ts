@@ -1,5 +1,5 @@
-import { anthropic, FISCHER_MODEL } from './claude'
-import Anthropic from '@anthropic-ai/sdk'
+import { z } from 'zod'
+import { structuredCall } from './llm'
 
 /**
  * The 10 PXL-style criteria — binary (yes/no) rather than subjective 1-10
@@ -30,26 +30,10 @@ export interface PxlScore {
 
 const MAX_POSSIBLE_SCORE = PXL_CRITERIA.reduce((sum, c) => sum + c.weight, 0)
 
-const PXL_TOOL_SCHEMA = {
-  name: 'submit_pxl_score',
-  description: 'Submit the PXL binary scoring for this backlog item.',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      criteria: {
-        type: 'object',
-        properties: Object.fromEntries(PXL_CRITERIA.map(c => [c.key, { type: 'boolean' }])),
-        required: PXL_CRITERIA.map(c => c.key)
-      },
-      reasoning: {
-        type: 'object',
-        properties: Object.fromEntries(PXL_CRITERIA.map(c => [c.key, { type: 'string' }])),
-        required: PXL_CRITERIA.map(c => c.key)
-      }
-    },
-    required: ['criteria', 'reasoning']
-  }
-}
+const PxlSchema = z.object({
+  criteria: z.object(Object.fromEntries(PXL_CRITERIA.map(c => [c.key, z.boolean()])) as Record<string, z.ZodBoolean>),
+  reasoning: z.object(Object.fromEntries(PXL_CRITERIA.map(c => [c.key, z.string()])) as Record<string, z.ZodString>)
+})
 
 /**
  * Scores a single backlog item against the PXL criteria, grounded in the
@@ -72,23 +56,15 @@ ${params.auditContext ? `**AUDIT CONTEXT:**\n${params.auditContext}` : ''}
 **CRITERIA:**
 ${PXL_CRITERIA.map((c, i) => `${i + 1}. ${c.question}`).join('\n')}
 
-Submit your scoring via the submit_pxl_score tool — one boolean and one short reasoning sentence per criterion.`
+Return one boolean and one short reasoning sentence per criterion.`
 
-  const response = await anthropic.messages.create({
-    model: FISCHER_MODEL,
-    max_tokens: 2048,
+  const { criteria, reasoning } = await structuredCall({
+    schema: PxlSchema,
     system: 'You are Fischer scoring a CRO hypothesis against the PXL prioritization framework. Be strict and evidence-based — an unclear case is a "no," not a generous "yes."',
-    messages: [{ role: 'user', content: prompt }],
-    tools: [PXL_TOOL_SCHEMA],
-    tool_choice: { type: 'tool', name: 'submit_pxl_score' }
+    content: prompt,
+    maxTokens: 8000,
+    effort: 'low'
   })
-
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
-  )
-  if (!toolUse) throw new Error('PXL scoring did not return a structured result.')
-
-  const { criteria, reasoning } = toolUse.input as { criteria: Record<string, boolean>; reasoning: Record<string, string> }
 
   const totalScore = PXL_CRITERIA.reduce((sum, c) => sum + (criteria[c.key] ? c.weight : 0), 0)
 
