@@ -42,7 +42,20 @@ export interface ScreenshotSegment {
   index: number
   y: number            // CSS px from top of page where this section starts
   height: number
-  base64: string       // JPEG, no data: prefix
+  base64: string       // no data: prefix
+  mediaType?: ImageMediaType  // defaults to image/jpeg (our own captures); manual uploads may be PNG/WebP
+}
+
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'
+
+/** Detects the real image type from the file's first bytes (manual uploads can be PNG, WebP…). */
+export function detectImageType(base64: string): ImageMediaType | null {
+  const head = Buffer.from(base64.slice(0, 24), 'base64')
+  if (head[0] === 0xff && head[1] === 0xd8) return 'image/jpeg'
+  if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return 'image/png'
+  if (head.slice(0, 4).toString('ascii') === 'RIFF' && head.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
+  if (head.slice(0, 3).toString('ascii') === 'GIF') return 'image/gif'
+  return null
 }
 
 export interface AboveFoldCta {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { AuditInput } from '@/lib/claude'
-import { runAuditPipeline, type ClientRow } from '@/lib/audit-pipeline'
+import { runAuditPipeline, stripDataPrefix, type ClientRow } from '@/lib/audit-pipeline'
+import { detectImageType } from '@/lib/capture'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { auditRateLimit, checkRateLimit } from '@/lib/ratelimit'
 import { isValidHttpUrl } from '@/lib/validate'
@@ -21,6 +22,12 @@ export async function POST(req: NextRequest) {
   const input: AuditRequestBody = await req.json()
   if (!input.pageUrl || !isValidHttpUrl(input.pageUrl)) {
     return NextResponse.json({ error: 'A valid page URL (http/https, public host) is required.' }, { status: 400 })
+  }
+
+  for (const [label, img] of [['desktop', input.manualScreenshotDesktop], ['mobile', input.manualScreenshotMobile]] as const) {
+    if (img && !detectImageType(stripDataPrefix(img))) {
+      return NextResponse.json({ error: `The ${label} screenshot must be a JPEG, PNG, WebP or GIF image.` }, { status: 400 })
+    }
   }
 
   let client: ClientRow | null = null

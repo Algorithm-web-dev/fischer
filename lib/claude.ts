@@ -301,7 +301,7 @@ export function buildContentBlocks(ctx: AuditContext): Anthropic.Beta.BetaConten
   for (const v of [ctx.capture.desktop, ctx.capture.mobile]) {
     v.segments.forEach((s, i) => {
       blocks.push({ type: 'text', text: `${v.viewport.toUpperCase()} section ${i + 1} of ${v.segments.length} (page y ${s.y}–${s.y + s.height}px):` })
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: s.base64 } })
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: s.mediaType ?? 'image/jpeg', data: s.base64 } })
     })
   }
   blocks.push({ type: 'text', text: buildAuditPrompt(ctx) })

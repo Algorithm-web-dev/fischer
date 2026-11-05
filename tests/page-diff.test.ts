@@ -67,3 +67,14 @@ test('GA4 helpers: exact path variants and calendar month ranges', () => {
   assert.deepEqual(monthRange('2026-02'), { startDate: '2026-02-01', endDate: '2026-02-28' })
   assert.deepEqual(monthRange('2024-02'), { startDate: '2024-02-01', endDate: '2024-02-29' })
 })
+
+test('manual screenshot type is detected from the file bytes, not assumed to be JPEG', async () => {
+  const { detectImageType } = await import('../lib/capture')
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64')
+  const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]).toString('base64')
+  const webp = Buffer.from('RIFF\0\0\0\0WEBPVP8 ').toString('base64')
+  assert.equal(detectImageType(png), 'image/png')
+  assert.equal(detectImageType(jpg), 'image/jpeg')
+  assert.equal(detectImageType(webp), 'image/webp')
+  assert.equal(detectImageType(Buffer.from('%PDF-1.7 hello').toString('base64')), null)
+})

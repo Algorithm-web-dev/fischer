@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { capturePage, VIEWPORTS, type PageCapture, type ViewportName, type ViewportCapture } from './capture'
+import { capturePage, detectImageType, VIEWPORTS, type PageCapture, type ViewportName, type ViewportCapture } from './capture'
 import { parseHtml } from './scraper'
 import { assessConfidence, isFullyConfident, type ConfidenceCheck } from './confidence'
 import { fetchPageSpeedBoth } from './pagespeed'
@@ -177,9 +177,12 @@ function applyManualOverrides(capture: PageCapture, input: AuditInput) {
   for (const [name, b64] of [['desktop', input.manualScreenshotDesktop], ['mobile', input.manualScreenshotMobile]] as const) {
     if (!b64) continue
     const v = capture[name]
+    const base64 = stripDataPrefix(b64)
+    const mediaType = detectImageType(base64)
+    if (!mediaType) throw new Error(`The ${name} screenshot is not a JPEG, PNG, WebP or GIF image.`)
     v.ok = true
     v.error = undefined
-    v.segments = [{ index: 0, y: 0, height: VIEWPORTS[name].height, base64: stripDataPrefix(b64) }]
+    v.segments = [{ index: 0, y: 0, height: VIEWPORTS[name].height, base64, mediaType }]
   }
 }
 
@@ -249,9 +252,10 @@ async function uploadScreenshots(supabase: SupabaseClient, auditId: string, capt
   const out: StoredScreenshots = { desktop: [], mobile: [] }
   for (const v of [capture.desktop, capture.mobile]) {
     for (const s of v.segments) {
-      const path = `${auditId}/${v.viewport}-${s.index}.jpg`
+      const type = s.mediaType ?? 'image/jpeg'
+      const path = `${auditId}/${v.viewport}-${s.index}.${type.split('/')[1].replace('jpeg', 'jpg')}`
       const { error } = await supabase.storage.from(SCREENSHOT_BUCKET)
-        .upload(path, Buffer.from(s.base64, 'base64'), { contentType: 'image/jpeg', upsert: true })
+        .upload(path, Buffer.from(s.base64, 'base64'), { contentType: type, upsert: true })
       if (error) { console.error(`Screenshot upload failed (${path}):`, error.message); continue }
       const { data } = supabase.storage.from(SCREENSHOT_BUCKET).getPublicUrl(path)
       out[v.viewport].push({ index: s.index, y: s.y, height: s.height, url: data.publicUrl })
