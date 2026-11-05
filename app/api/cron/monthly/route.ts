@@ -5,6 +5,8 @@ import { buildMonthlySnapshot, previousPeriod, periodToDate } from '@/lib/snapsh
 import { runAuditPipeline } from '@/lib/audit-pipeline'
 import { runLeakAnalysis, trackTopLeaks } from '@/lib/leak-store'
 import { monthRange } from '@/lib/ga4-audit'
+import { raiseAlert } from '@/lib/alerts'
+import { shiftPeriod } from '@/lib/snapshots'
 
 export const maxDuration = 300
 
@@ -47,6 +49,21 @@ export async function GET(req: NextRequest) {
       try {
         const s = await buildMonthlySnapshot(supabase, c, p)
         log.push({ client: c.name, period: p, snapshot: 'ok', errors: s.errors })
+        // First build of last month's snapshot → compare with the month before
+        if (p === prev && !has(p) && s.ga4?.success && s.ga4.totals) {
+          const { data: before } = await supabase.from('monthly_snapshots').select('ga4')
+            .eq('client_id', c.id).eq('period', periodToDate(shiftPeriod(prev, -1))).maybeSingle()
+          const b = before?.ga4?.totals, t = s.ga4.totals
+          if (b && b.sessions >= 1000 && t.sessions >= 1000 && b.conversionRate > 0) {
+            const change = ((t.conversionRate - b.conversionRate) / b.conversionRate) * 100
+            if (change <= -20) await raiseAlert(supabase, {
+              clientId: c.id, clientName: c.name, type: 'conversion_drop', dedupeKey: `cvr_drop:${c.id}:${prev}`,
+              title: `Conversion rate fell ${Math.abs(change).toFixed(0)}% in ${prev}`,
+              message: `${b.conversionRate}% → ${t.conversionRate}% (sessions ${b.sessions.toLocaleString()} → ${t.sessions.toLocaleString()}). Check tracking, recent site changes and campaigns.`,
+              link: `/clients/${c.id}`
+            })
+          }
+        }
         // First build of last month's snapshot → also build last month's leak map
         if (p === prev && !has(p) && c.ga4_property_id) {
           const leaks = await runLeakAnalysis(supabase, c, monthRange(prev))
@@ -88,10 +105,19 @@ export async function GET(req: NextRequest) {
           try {
             const outcome = await runAuditPipeline({ supabase, auditId: row.id, input, client, trackedPageId: page.id })
             log.push({ audit: row.id, page: page.page_url, status: outcome.status })
+            if (outcome.status === 'needs_manual_input') await raiseAlert(supabase, {
+              clientId: client.id, clientName: client.name, type: 'audit_needs_input', dedupeKey: `audit_input:${page.id}`, severity: 'medium',
+              title: 'Scheduled audit needs manual input', message: `${page.page_url}: ${Object.values(outcome.confidence.reasons).join(' · ')}`,
+              link: `/clients/${client.id}`
+            })
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             await supabase.from('audits').update({ status: 'failed', error_message: msg }).eq('id', row.id)
             log.push({ audit: row.id, page: page.page_url, status: 'failed', error: msg })
+            await raiseAlert(supabase, {
+              clientId: client.id, clientName: client.name, type: 'audit_failed', dedupeKey: `audit_failed:${page.id}`, severity: 'medium',
+              title: 'Scheduled audit failed', message: `${page.page_url}: ${msg}`, link: `/clients/${client.id}`
+            })
           }
         }
       }

@@ -15,6 +15,14 @@ export default function ClientsPage() {
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('')
+  const [alertCounts, setAlertCounts] = useState<Record<string, number>>({})
+  useEffect(() => {
+    api('/api/alerts').then(d => {
+      const counts: Record<string, number> = {}
+      for (const a of d.alerts) if (a.client_id) counts[a.client_id] = (counts[a.client_id] ?? 0) + 1
+      setAlertCounts(counts)
+    }).catch(() => {})
+  }, [])
 
   const load = () => api<{ clients: ClientRow[] }>('/api/clients')
     .then(d => setClients(d.clients)).catch(e => setError(e.message)).finally(() => setLoading(false))
@@ -47,6 +55,7 @@ export default function ClientsPage() {
                 <Pill>Tier {c.tier}</Pill>
                 <Pill color={c.integrations.ga4 ? T.good : T.muted}>GA4 {c.integrations.ga4 ? 'on' : 'off'}</Pill>
                 <Pill color={c.integrations.clarity ? T.good : T.muted}>Clarity {c.integrations.clarity ? 'on' : 'off'}</Pill>
+                {alertCounts[c.id] > 0 && <Pill color={T.bad}>{alertCounts[c.id]} alert{alertCounts[c.id] === 1 ? '' : 's'}</Pill>}
               </div>
             </Link>
           ))}

@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
     page_url: body.pageUrl,
     page_type: body.pageType ?? 'Landing Page',
     business_goal: body.businessGoal ?? 'Lead Generation',
-    active: body.active ?? true
+    active: body.active ?? true,
+    journey_kind: ['lead', 'ecommerce'].includes(body.journeyKind) ? body.journeyKind : (/e-?commerce|sales/i.test(body.businessGoal ?? '') ? 'ecommerce' : 'lead')
   }, { onConflict: 'client_id,page_url' }).select().single()
   if (error) return bad(error.message, 500)
   return NextResponse.json({ page: data })
@@ -37,6 +38,10 @@ export async function PATCH(req: NextRequest) {
   if (body.active !== undefined) updates.active = !!body.active
   if (body.pageType !== undefined) updates.page_type = body.pageType
   if (body.businessGoal !== undefined) updates.business_goal = body.businessGoal
+  if (body.journeyKind !== undefined) {
+    if (!['none', 'lead', 'ecommerce'].includes(body.journeyKind)) return bad('journeyKind must be none, lead or ecommerce.')
+    updates.journey_kind = body.journeyKind
+  }
   const { data, error } = await auth.supabase.from('tracked_pages').update(updates).eq('id', body.id).select().single()
   if (error) return bad(error.message, 500)
   return NextResponse.json({ page: data })

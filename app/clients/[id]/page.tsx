@@ -24,11 +24,17 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
   const [client, setClient] = useState<any>(null)
   const [trends, setTrends] = useState<any>(null)
   const [error, setError] = useState('')
+  const [alerts, setAlerts] = useState<any[]>([])
+
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab') as Tab | null
+    if (t) setTab(t)
+  }, [])
 
   const load = useCallback(async () => {
     try {
-      const [c, t] = await Promise.all([api(`/api/clients/${params.id}`), api(`/api/clients/${params.id}/trends`)])
-      setClient(c.client); setTrends(t)
+      const [c, t, al] = await Promise.all([api(`/api/clients/${params.id}`), api(`/api/clients/${params.id}/trends`), api(`/api/alerts?clientId=${params.id}`).catch(() => ({ alerts: [] }))])
+      setClient(c.client); setTrends(t); setAlerts(al.alerts)
     } catch (e) { setError(e instanceof Error ? e.message : 'Load failed') }
   }, [params.id])
   useEffect(() => { load() }, [load])
@@ -41,6 +47,18 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
       <Pill color={client.integrations.clarity ? T.good : T.muted}>Clarity {client.integrations.clarity ? 'on' : 'off'}</Pill>
     </div>}>
       {error && <div style={{ color: T.bad }}>{error}</div>}
+      {alerts.length > 0 && (
+        <div style={{ ...cardStyle, borderColor: T.bad, padding: 14 }}>
+          {alerts.map(a => (
+            <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0', flexWrap: 'wrap' }}>
+              <Pill color={a.severity === 'high' ? T.bad : a.severity === 'medium' ? T.warn : T.muted}>{a.severity}</Pill>
+              <div style={{ flex: '1 1 300px', fontSize: 14 }}><strong>{a.title}</strong> <span style={{ color: T.muted, fontSize: 12 }}>{a.created_at.slice(0, 10)}</span>
+                {a.message && <div style={{ fontSize: 13, color: T.muted, whiteSpace: 'pre-line' }}>{a.message}</div>}</div>
+              {a.link && <a href={a.link} style={{ color: T.gold, fontSize: 13 }}>Open</a>}
+              <Button kind="ghost" onClick={async () => { await api('/api/alerts', { method: 'PATCH', json: { id: a.id } }); setAlerts(alerts.filter(x => x.id !== a.id)) }}>Resolve</Button>
+            </div>))}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${T.line}`, marginBottom: 18, overflowX: 'auto' }}>
         {tabs.map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)} style={{ background: 'none', border: 'none', color: tab === k ? T.gold : T.muted, borderBottom: `2px solid ${tab === k ? T.gold : 'transparent'}`, padding: '10px 14px', cursor: 'pointer', fontWeight: 600, fontSize: 14, fontFamily: 'inherit', whiteSpace: 'nowrap' }}>{label}</button>
@@ -191,6 +209,24 @@ function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
   )
 }
 
+function JourneyDetail({ j }: { j: any }) {
+  const r = j.result
+  return (
+    <div style={{ flexBasis: '100%', background: T.panel2, borderRadius: 10, padding: 14, marginTop: 6 }}>
+      <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>{r.kind === 'lead' ? 'Lead' : 'Checkout'} journey on mobile · {j.created_at.slice(0, 16).replace('T', ' ')} · nothing was submitted</div>
+      <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6 }}>
+        {r.steps.map((s: any, i: number) => (
+          <div key={i} style={{ minWidth: 170, maxWidth: 170 }}>
+            {s.screenshotUrl && <img src={s.screenshotUrl} alt={s.name} style={{ width: '100%', borderRadius: 6, border: `2px solid ${s.ok ? T.line : T.bad}` }} />}
+            <div style={{ fontSize: 12, marginTop: 4 }}><strong style={{ color: s.ok ? T.good : T.bad }}>{s.ok ? '✓' : '✗'} {s.name}</strong><div style={{ color: T.muted }}>{s.detail}</div></div>
+          </div>))}
+      </div>
+      {r.issues.map((i: any) => <div key={i.code} style={{ fontSize: 13, padding: '3px 0' }}><Pill color={i.severity === 'high' ? T.bad : i.severity === 'medium' ? T.warn : T.muted}>{i.severity}</Pill> {i.message} <span style={{ color: T.muted }}>— {i.fix}</span></div>)}
+      {r.checkout?.paymentMethods?.length > 0 && <div style={{ fontSize: 12, color: T.muted }}>Payment methods seen: {r.checkout.paymentMethods.join(', ')}</div>}
+    </div>
+  )
+}
+
 function FunnelCard({ f, money }: { f: any; money: ((n: number) => string) | null }) {
   const max = Math.max(1, ...f.steps.map((s: any) => s.users))
   return (
@@ -242,13 +278,15 @@ function TrackingKit({ client }: { client: any }) {
 function Pages({ client, trends, reload }: { client: any; trends: any; reload: () => void }) {
   const [pages, setPages] = useState<any[]>([])
   const [audits, setAudits] = useState<any[]>([])
+  const [journeys, setJourneys] = useState<any[]>([])
+  const [openJourney, setOpenJourney] = useState<string | null>(null)
   const [form, setForm] = useState({ pageUrl: client.primary_url || '', pageType: 'Landing Page', businessGoal: 'Lead Generation' })
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
 
   const load = useCallback(async () => {
-    const [p, a] = await Promise.all([api(`/api/tracked-pages?clientId=${client.id}`), api(`/api/audits?clientId=${client.id}&limit=50`)])
-    setPages(p.pages); setAudits(a.audits)
+    const [p, a, j] = await Promise.all([api(`/api/tracked-pages?clientId=${client.id}`), api(`/api/audits?clientId=${client.id}&limit=50`), api(`/api/journeys?clientId=${client.id}`).catch(() => ({ checks: [] }))])
+    setPages(p.pages); setAudits(a.audits); setJourneys(j.checks)
   }, [client.id])
   useEffect(() => { load() }, [load])
 
@@ -266,6 +304,14 @@ function Pages({ client, trends, reload }: { client: any; trends: any; reload: (
     finally { setBusy(null); load(); reload() }
   }
 
+  async function checkJourney(p: any) {
+    setBusy(`j:${p.id}`); setMsg('Walking through the page like a mobile visitor (nothing is submitted)…')
+    try { const r = await api('/api/journeys', { method: 'POST', json: { trackedPageId: p.id } }); setMsg(r.check.passed ? 'Journey passed.' : 'Journey found problems — see below.'); setOpenJourney(p.id) }
+    catch (e) { setMsg(e instanceof Error ? e.message : 'Journey failed') }
+    finally { setBusy(null); load() }
+  }
+  const lastJourney = (p: any) => journeys.find(j => j.tracked_page_id === p.id)
+
   return (
     <>
       <div style={cardStyle}>
@@ -275,8 +321,14 @@ function Pages({ client, trends, reload }: { client: any; trends: any; reload: (
           <div key={p.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '10px 0', borderBottom: `1px solid ${T.line}` }}>
             <div style={{ flex: '1 1 280px', wordBreak: 'break-all' }}>{p.page_url}<div style={{ fontSize: 12, color: T.muted }}>{p.page_type} · {p.business_goal} · last audit {p.last_audit_at ? p.last_audit_at.slice(0, 10) : 'never'}</div></div>
             {!p.active && <Pill color={T.warn}>paused</Pill>}
+            <select title="Weekly journey check" style={{ ...inputStyle, width: 150 }} value={p.journey_kind ?? 'none'} onChange={async e => { await api('/api/tracked-pages', { method: 'PATCH', json: { id: p.id, journeyKind: e.target.value } }); load() }}>
+              <option value="none">No journey</option><option value="lead">Lead journey</option><option value="ecommerce">Checkout journey</option>
+            </select>
+            {lastJourney(p) && <button onClick={() => setOpenJourney(openJourney === p.id ? null : p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><Pill color={lastJourney(p).passed ? T.good : T.bad}>journey {lastJourney(p).passed ? 'ok' : 'broken'}</Pill></button>}
+            <Button kind="ghost" onClick={() => checkJourney(p)} disabled={!!busy}>{busy === `j:${p.id}` ? 'Checking…' : 'Check journey'}</Button>
             <Button kind="ghost" onClick={() => runNow(p)} disabled={!!busy}>{busy === p.id ? 'Running…' : 'Audit now'}</Button>
             <Button kind="ghost" onClick={async () => { await api('/api/tracked-pages', { method: 'PATCH', json: { id: p.id, active: !p.active } }); load() }}>{p.active ? 'Pause' : 'Resume'}</Button>
+            {openJourney === p.id && lastJourney(p) && <JourneyDetail j={lastJourney(p)} />}
             <Button kind="danger" onClick={async () => { if (confirm('Stop tracking this page? Past audits are kept.')) { await api(`/api/tracked-pages?id=${p.id}`, { method: 'DELETE' }); load() } }}>Remove</Button>
           </div>
         ))}

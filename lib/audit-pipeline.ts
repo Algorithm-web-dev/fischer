@@ -10,6 +10,7 @@ import { fingerprintPage, diffFingerprints, type PageFingerprint, type PageDiff 
 import { leakForUrl, type LeakAnalysis } from './leaks'
 import { buildTrackingReport } from './tracking'
 import { formatFunnelForPrompt } from './funnels'
+import { raiseAlert, resolveAlerts } from './alerts'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -165,6 +166,18 @@ export async function runAuditPipeline(params: {
       audit_id: auditId,
       details: pageDiff
     })
+  }
+
+  if (client && tracking) {
+    const key = `tracking:${client.id}:${input.pageUrl}`
+    const high = tracking.issues.filter(i => i.severity === 'high')
+    if (high.length) {
+      await raiseAlert(supabase, {
+        clientId: client.id, clientName: client.name, type: 'tracking_broken', dedupeKey: key,
+        title: 'Tracking problem found', message: `${input.pageUrl}\n${high.map(i => `• ${i.message}`).join('\n')}`,
+        link: `/audit?view=${auditId}`
+      })
+    } else await resolveAlerts(supabase, key)
   }
 
   if (params.trackedPageId) {
