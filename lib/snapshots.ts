@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchGA4AuditData, fetchPageMetrics, monthRange, iso, type DateRange, type GA4PageMetrics, type GA4Totals } from './ga4-audit'
 import { aggregateStoredDays, fetchClarityExport, parseClarityExport, type ClarityDaily, type ClarityPageData } from './clarity'
 import type { ClientRow } from './audit-pipeline'
+import { decryptSecret } from './secrets'
 import { pctChange } from './stats'
 
 /** "2026-10" → "2026-10-01" */
@@ -91,7 +92,7 @@ export async function buildMonthlySnapshot(
 /** Stores yesterday's Clarity export for one client (1 API call of the 10/day allowance). */
 export async function storeClarityDay(supabase: SupabaseClient, client: ClientRow) {
   if (!client.clarity_api_token) return { skipped: true }
-  const res = await fetchClarityExport(client.clarity_api_token, 1)
+  const res = await fetchClarityExport(decryptSecret(client.clarity_api_token), 1)
   if (!res.success) return { error: res.error }
   const parsed = parseClarityExport(res.metrics)
   // numOfDays=1 covers the last 24 hours, so file it under yesterday's date.

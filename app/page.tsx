@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
@@ -8,6 +8,12 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('error') === 'no_access') {
+      setError('This account has no access to Fischer. Ask an admin to add you.')
+    }
+  }, [])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -52,7 +58,7 @@ export default function LoginPage() {
             </div>
           </div>
           <p style={{ color: '#7A9BBD', fontSize: '14px', margin: 0, lineHeight: 1.6 }}>
-            Algorithm Agency internal tool.<br />Sign in with your team account.
+            Algorithm Agency.<br />Team members and clients sign in here.
           </p>
         </div>
 

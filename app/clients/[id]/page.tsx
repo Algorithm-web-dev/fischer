@@ -6,6 +6,7 @@ import { ClientForm, toFormValues } from '@/components/ClientForm'
 import { Backlog } from '@/components/tabs/Backlog'
 import { Guardrails } from '@/components/tabs/Guardrails'
 import { Competitors } from '@/components/tabs/Competitors'
+import { ClientAccess } from '@/components/ClientAccess'
 
 type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'backlog' | 'changes' | 'tests' | 'guardrails' | 'competitors' | 'reports' | 'settings'
 
@@ -654,6 +655,7 @@ function Settings({ client, reload }: { client: any; reload: () => void }) {
       <div style={cardStyle}>
         <ClientForm initial={toFormValues(client)} submitLabel="Save changes" onSubmit={async v => { await api('/api/clients', { method: 'PATCH', json: { id: client.id, ...v } }); reload() }} />
       </div>
+      <ClientAccess client={client} />
     </>
   )
 }

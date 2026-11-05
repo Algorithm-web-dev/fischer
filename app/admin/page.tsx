@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Page, cardStyle, labelStyle, T, api } from '@/components/ui'
+import { TeamAdmin } from '@/components/TeamAdmin'
 
 const usd = (n: number) => `$${n.toFixed(2)}`
 
@@ -17,6 +18,7 @@ export default function AdminPage() {
   return (
     <Page title="Admin">
       {error && <div style={{ color: T.bad }}>{error}</div>}
+      <TeamAdmin />
       {usage && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 18 }}>

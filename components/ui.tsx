@@ -43,9 +43,10 @@ export function Nav() {
       <Link href="/audit" style={link}>Run audit</Link>
       <Link href="/library" style={link}>Library</Link>
       <Link href="/admin" style={link}>Admin</Link>
+      <Link href="/account" style={{ ...link, marginLeft: 'auto' }}>Account</Link>
       <button
         onClick={async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/' }}
-        style={{ ...link, marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+        style={{ ...link, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
       >Sign out</button>
     </nav>
   )

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase'
+import { encryptSecret } from '@/lib/secrets'
+import { logActivity } from '@/lib/activity'
 
 /**
  * Client management — CRUD for retainer clients with their integration
@@ -53,7 +55,7 @@ export async function POST(req: NextRequest) {
       cro_hours_monthly: body.croHoursMonthly ?? null,
       ga4_property_id: body.ga4PropertyId ?? null,
       clarity_project_id: body.clarityProjectId ?? null,
-      clarity_api_token: body.clarityApiToken ?? null,
+      clarity_api_token: body.clarityApiToken ? encryptSecret(String(body.clarityApiToken).trim()) : null,
       industry: body.industry ?? null,
       avg_order_value: body.avgOrderValue ?? null,
       currency: body.currency ?? 'ZAR',
@@ -67,8 +69,9 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await logActivity(supabase, user, 'client.create', { entityType: 'client', entityId: data.id, clientId: data.id, details: { name: data.name } })
 
-  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null } })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined } })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -90,7 +93,7 @@ export async function PATCH(req: NextRequest) {
   if (body.croHoursMonthly !== undefined) updates.cro_hours_monthly = body.croHoursMonthly
   if (body.ga4PropertyId !== undefined) updates.ga4_property_id = body.ga4PropertyId
   if (body.clarityProjectId !== undefined) updates.clarity_project_id = body.clarityProjectId
-  if (body.clarityApiToken !== undefined && !String(body.clarityApiToken).startsWith('••••')) updates.clarity_api_token = body.clarityApiToken || null
+  if (body.clarityApiToken !== undefined && !String(body.clarityApiToken).startsWith('••••')) updates.clarity_api_token = body.clarityApiToken ? encryptSecret(String(body.clarityApiToken).trim()) : null
   if (body.industry !== undefined) updates.industry = body.industry
   if (body.avgOrderValue !== undefined) updates.avg_order_value = body.avgOrderValue
   if (body.currency !== undefined) updates.currency = body.currency
@@ -108,6 +111,7 @@ export async function PATCH(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await logActivity(supabase, user, 'client.update', { entityType: 'client', entityId: body.id, clientId: body.id, details: { fields: Object.keys(updates) } })
 
-  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null } })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined } })
 }

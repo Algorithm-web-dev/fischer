@@ -13,6 +13,7 @@ import { formatFunnelForPrompt } from './funnels'
 import { raiseAlert, resolveAlerts } from './alerts'
 import { leadQualityReport, normalisePath } from './lead-quality'
 import { libraryPromptSection } from './test-library'
+import { decryptSecret } from './secrets'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -265,7 +266,7 @@ async function loadClarity(supabase: SupabaseClient, client: ClientRow | null, p
     .select('data').eq('client_id', client.id).gte('day', since)
   const days = (data ?? []).map(r => r.data as ClarityDaily)
   if (days.length > 0) return aggregateStoredDays(days, pageUrl)
-  return fetchClarityData(client.clarity_api_token, pageUrl)
+  return fetchClarityData(decryptSecret(client.clarity_api_token), pageUrl)
 }
 
 interface PreviousRow {

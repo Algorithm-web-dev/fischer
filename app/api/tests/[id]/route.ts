@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, bad } from '@/lib/api'
 import { twoProportionTest } from '@/lib/stats'
+import { logActivity } from '@/lib/activity'
 
 /**
  * A/B test lifecycle: draft → approved → running → completed / abandoned.
@@ -71,6 +72,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { data: saved, error } = await supabase.from('test_briefs').update(updates).eq('id', params.id).select().single()
   if (error) return bad(error.message, 500)
+  await logActivity(supabase, user, 'test.update', { entityType: 'test', entityId: params.id, clientId: saved.client_id, details: { fields: Object.keys(updates) } })
 
   if (updates.status === 'completed' && test.status !== 'completed') {
     const winner = saved.winner

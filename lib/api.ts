@@ -15,6 +15,15 @@ export async function requireUser(): Promise<Authed | Unauthed> {
 
 export const bad = (message: string, status = 400) => NextResponse.json({ error: message }, { status })
 
+/** Like requireUser, but also checks the caller's role (middleware already does; this is for sensitive routes). */
+export async function requireRole(...allowed: ('admin' | 'analyst' | 'viewer' | 'client')[]): Promise<(Authed & { role: string }) | Unauthed> {
+  const auth = await requireUser()
+  if (auth.error) return auth
+  const { data: role } = await auth.supabase.rpc('fischer_whoami')
+  if (!role || !allowed.includes(role)) return { error: NextResponse.json({ error: 'You do not have permission for this.' }, { status: 403 }) }
+  return { ...auth, role }
+}
+
 /** Accepts "YYYY-MM" or "YYYY-MM-DD"; returns "YYYY-MM" or null. */
 export function parsePeriod(value: string | null | undefined): string | null {
   if (!value) return null

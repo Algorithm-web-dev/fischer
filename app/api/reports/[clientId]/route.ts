@@ -4,6 +4,7 @@ import { requireUser, bad, parsePeriod } from '@/lib/api'
 import { buildMonthlyReport } from '@/lib/report'
 import { previousPeriod, periodToDate } from '@/lib/snapshots'
 import { createSupabaseServiceClient } from '@/lib/supabase'
+import { logActivity } from '@/lib/activity'
 
 export const maxDuration = 120
 
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { clientId: s
   }).select().single()
   if (error) return bad(error.message, 500)
 
+  await logActivity(auth.supabase, auth.user, 'report.share', { entityType: 'report_share', entityId: data.id, clientId: params.clientId, details: { period } })
   const origin = process.env.FISCHER_PUBLIC_URL || req.nextUrl.origin
   return NextResponse.json({ share: data, url: `${origin}/report/${token}`, pdfUrl: `${origin}/api/reports/${params.clientId}/pdf?period=${period}` })
 }
@@ -49,5 +51,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { clientId:
   if (!token) return bad('token is required.')
   const { error } = await auth.supabase.from('report_shares').update({ revoked: true }).eq('client_id', params.clientId).eq('token', token)
   if (error) return bad(error.message, 500)
+  await logActivity(auth.supabase, auth.user, 'report.revoke', { entityType: 'report_share', clientId: params.clientId })
   return NextResponse.json({ ok: true })
 }

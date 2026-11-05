@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextRequest, NextResponse } from 'next/server'
+import { accessDecision, type Role } from './lib/access'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -52,6 +53,16 @@ export async function middleware(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
     }
     return NextResponse.redirect(new URL('/', request.url))
+  }
+
+  // Role-based access (team admin/analyst/viewer, client portal user, or none)
+  const { data: role } = await supabase.rpc('fischer_whoami')
+  const decision = accessDecision((role ?? null) as Role, pathname, request.method)
+  if (!decision.allow) {
+    if (pathname.startsWith('/api/') || !decision.redirect) {
+      return NextResponse.json({ error: decision.message }, { status: decision.status })
+    }
+    return NextResponse.redirect(new URL(decision.redirect, request.url))
   }
 
   return response

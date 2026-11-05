@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, bad } from '@/lib/api'
+import { logActivity } from '@/lib/activity'
 
 /** Update a backlog item. Moving it to "shipped" records the change in the change log. */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -20,6 +21,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { data: saved, error } = await supabase.from('backlog_items').update(updates).eq('id', params.id).select().single()
   if (error) return bad(error.message, 500)
 
+  if (updates.tier && updates.tier !== item.tier) {
+    await logActivity(supabase, user, updates.tier === 'shipped' ? 'backlog.ship' : 'backlog.move', { entityType: 'backlog_item', entityId: item.id, clientId: item.client_id, details: { from: item.tier, to: updates.tier, title: item.title } })
+  }
   if (updates.tier === 'shipped' && item.tier !== 'shipped') {
     let pageUrl: string | null = body.pageUrl ?? null
     if (!pageUrl && item.source_audit_id) {
