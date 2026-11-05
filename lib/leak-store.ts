@@ -5,6 +5,8 @@ import type { ClientRow } from './audit-pipeline'
 import { benchmarkTargets } from './benchmarks'
 import { fetchFunnel } from './funnels'
 import { leadQualityReport } from './lead-quality'
+import { registerGoogleAuth } from './google'
+import { fetchAdsLandingPages } from './google-ads'
 
 export interface StoredLeakAnalysis { id: string; created_at: string; data: LeakAnalysis }
 
@@ -21,6 +23,7 @@ export async function runLeakAnalysis(
   userId?: string | null
 ): Promise<StoredLeakAnalysis> {
   if (!client.ga4_property_id) throw new Error('Connect GA4 for this client to build a revenue leak map.')
+  registerGoogleAuth(client)
   const targets = await benchmarkTargets(supabase, client).catch(() => undefined)
   // No value per conversion set? Use real revenue per lead from the CRM (90 days, ≥ 20 leads).
   const crm = client.avg_order_value ? null : await leadQualityReport(supabase, client.id, 90).catch(() => null)
@@ -35,6 +38,23 @@ export async function runLeakAnalysis(
   })
   if (targets?.note) data.notes.push(targets.note)
   if (!client.avg_order_value && crm?.valuePerLead) data.notes.push(`Value per conversion taken from the CRM: ${crm.valuePerLead} revenue per lead over 90 days.`)
+  // Google Ads spend per landing page (when an Ads account is connected)
+  if (client.google_ads_customer_id && client.google_refresh_token) {
+    try {
+      const rows = await fetchAdsLandingPages(client, range)
+      const pageByPath = new Map(data.pages.map(p => [p.page, p]))
+      const siteRate = data.site.conversionRate
+      const enriched = rows.slice(0, 30).map(r => {
+        const leak = pageByPath.get(r.path)
+        return { ...r, pageConversionRate: leak?.conversionRate ?? null, belowAverage: !!leak && leak.conversionRate < siteRate }
+      })
+      data.adSpend = {
+        total: rows.reduce((s, r) => s + r.cost, 0),
+        onBelowAveragePages: enriched.filter(r => r.belowAverage).reduce((s, r) => s + r.cost, 0),
+        pages: enriched
+      }
+    } catch (err) { data.notes.push(`Google Ads spend not available: ${err instanceof Error ? err.message : String(err)}`) }
+  }
   // E-commerce if GA4 records revenue; otherwise treat as lead generation.
   const kind = data.valueBasis === 'ga4_revenue' ? 'ecommerce' : 'lead'
   data.funnel = await fetchFunnel({

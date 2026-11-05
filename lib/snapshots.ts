@@ -3,6 +3,7 @@ import { fetchGA4AuditData, fetchPageMetrics, monthRange, iso, type DateRange, t
 import { aggregateStoredDays, fetchClarityExport, parseClarityExport, type ClarityDaily, type ClarityPageData } from './clarity'
 import type { ClientRow } from './audit-pipeline'
 import { decryptSecret } from './secrets'
+import { registerGoogleAuth } from './google'
 import { pctChange } from './stats'
 
 /** "2026-10" → "2026-10-01" */
@@ -43,6 +44,7 @@ export async function buildMonthlySnapshot(
 ): Promise<MonthlySnapshot> {
   const range = monthRange(period)
   const errors: string[] = []
+  registerGoogleAuth(client)
 
   const { data: tracked } = await supabase.from('tracked_pages')
     .select('page_url').eq('client_id', client.id).eq('active', true)
@@ -134,6 +136,7 @@ export async function measureChangeImpact(
   windowDays = 28
 ): Promise<ChangeImpact | null> {
   if (!client.ga4_property_id) return null
+  registerGoogleAuth(client)
   const d = new Date(`${change.change_date}T00:00:00Z`)
   const day = 86400000
   const before = { startDate: iso(new Date(d.getTime() - windowDays * day)), endDate: iso(new Date(d.getTime() - day)) }

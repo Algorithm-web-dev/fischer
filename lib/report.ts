@@ -67,6 +67,7 @@ export interface MonthlyReport {
     mobileGap: LeakAnalysis['mobileGap']
     paid: LeakAnalysis['paidTraffic']
     funnel: LeakAnalysis['funnel']
+    adSpend: LeakAnalysis['adSpend']
   } | null
   leadQuality: LeadQualityReport | null
   benchmark: ClientBenchmark | null
@@ -206,7 +207,8 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     byDevice: la.byDevice.map(d => ({ device: d.device, share: d.share })),
     mobileGap: la.mobileGap ? { ...la.mobileGap, value: Math.round(la.mobileGap.value * scale) } : null,
     paid: la.paidTraffic.slice(0, 3).map(p => ({ ...p, value: Math.round(p.value * scale) })),
-    funnel: la.funnel?.measured ? la.funnel : null
+    funnel: la.funnel?.measured ? la.funnel : null,
+    adSpend: la.adSpend ?? null
   } : null
 
   const { data: leadRows } = await supabase.from('leads').select('status, value, landing_page, utm_source, utm_medium, channel, created_at')

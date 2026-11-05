@@ -3,6 +3,7 @@ import { requireUser, bad } from '@/lib/api'
 import { fetchGA4AuditData, lastNDays } from '@/lib/ga4-audit'
 import { storeClarityDay } from '@/lib/snapshots'
 import { fetchGA4EventInventory } from '@/lib/tracking'
+import { registerGoogleAuth } from '@/lib/google'
 
 export const maxDuration = 60
 
@@ -18,6 +19,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if (!client) return bad('Client not found.', 404)
 
   const out: Record<string, unknown> = {}
+  registerGoogleAuth(client)
   if (client.ga4_property_id) {
     const r = await fetchGA4AuditData(client.ga4_property_id, { range: lastNDays(7), conversionEvent: client.ga4_conversion_event })
     const events = r.success ? await fetchGA4EventInventory(client.ga4_property_id).catch(() => null) : null

@@ -3,6 +3,7 @@ import { requireUser, bad } from '@/lib/api'
 import { fetchExperimentResults } from '@/lib/ga4-experiments'
 import { iso } from '@/lib/ga4-audit'
 import { twoProportionTest } from '@/lib/stats'
+import { registerGoogleAuth } from '@/lib/google'
 
 /** Pulls the latest visitor/conversion counts for a running test from GA4 and recomputes significance. */
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -18,6 +19,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
   const { data: client } = await supabase.from('clients').select('*').eq('id', test.client_id).single()
   if (!client?.ga4_property_id) return bad('This client has no GA4 property connected.')
+  registerGoogleAuth(client)
 
   try {
     const yesterday = iso(new Date(Date.now() - 86400000))

@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const clients = (data || []).map(c => ({
     ...c,
     clarity_api_token: c.clarity_api_token ? '••••configured' : null,
-    lead_ingest_key_hash: undefined,
+    lead_ingest_key_hash: undefined, google_refresh_token: undefined,
     integrations: {
       ga4: !!c.ga4_property_id,
       clarity: !!(c.clarity_project_id && c.clarity_api_token)
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   await logActivity(supabase, user, 'client.create', { entityType: 'client', entityId: data.id, clientId: data.id, details: { name: data.name } })
 
-  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined } })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined, google_refresh_token: undefined } })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -113,5 +113,5 @@ export async function PATCH(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   await logActivity(supabase, user, 'client.update', { entityType: 'client', entityId: body.id, clientId: body.id, details: { fields: Object.keys(updates) } })
 
-  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined } })
+  return NextResponse.json({ client: { ...data, clarity_api_token: data.clarity_api_token ? '••••configured' : null, lead_ingest_key_hash: undefined, google_refresh_token: undefined } })
 }

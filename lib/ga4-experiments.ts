@@ -21,7 +21,7 @@ export async function fetchExperimentResults(params: {
   range: DateRange
   conversionEvent?: string | null
 }): Promise<{ control: { visitors: number; conversions: number }; variant: { visitors: number; conversions: number } }> {
-  const ga = getGA4Client()
+  const ga = getGA4Client(params.propertyId)
   const rateMetric = params.conversionEvent ? `userKeyEventRate:${params.conversionEvent}` : 'userKeyEventRate'
   const [report] = await ga.runReport({
     property: `properties/${params.propertyId}`,

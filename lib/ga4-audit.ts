@@ -18,15 +18,28 @@
  */
 
 import { BetaAnalyticsDataClient } from '@google-analytics/data'
+import { authForProperty } from './google'
 
-let client: BetaAnalyticsDataClient | null = null
+let serviceClient: BetaAnalyticsDataClient | null = null
+const oauthClients = new Map<string, BetaAnalyticsDataClient>()
 
-export function getGA4Client(): BetaAnalyticsDataClient {
-  if (client) return client
+/**
+ * GA4 Data API client for a property: the client's own Google connection
+ * when one is registered (lib/google.ts registerGoogleAuth), otherwise the
+ * agency service account (GOOGLE_SERVICE_ACCOUNT_KEY).
+ */
+export function getGA4Client(propertyId?: string | null): BetaAnalyticsDataClient {
+  const oauth = authForProperty(propertyId)
+  if (oauth && propertyId) {
+    let c = oauthClients.get(String(propertyId))
+    if (!c) { c = new BetaAnalyticsDataClient({ authClient: oauth as any }); oauthClients.set(String(propertyId), c) }
+    return c
+  }
+  if (serviceClient) return serviceClient
   const credsJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-  if (!credsJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY not configured.')
-  client = new BetaAnalyticsDataClient({ credentials: JSON.parse(credsJson) })
-  return client
+  if (!credsJson) throw new Error('No Google connection for this client and GOOGLE_SERVICE_ACCOUNT_KEY is not configured.')
+  serviceClient = new BetaAnalyticsDataClient({ credentials: JSON.parse(credsJson) })
+  return serviceClient
 }
 
 export interface DateRange { startDate: string; endDate: string }
@@ -104,7 +117,7 @@ export async function fetchGA4AuditData(
   const range = opts.range ?? lastNDays(30)
   const ev = opts.conversionEvent || null
   try {
-    const ga = getGA4Client()
+    const ga = getGA4Client(propertyId)
     const property = `properties/${propertyId}`
     const dateRanges = [range]
 
@@ -197,7 +210,7 @@ export async function fetchPageMetrics(
   range: DateRange,
   conversionEvent?: string | null
 ): Promise<GA4PageMetrics | null> {
-  const ga = getGA4Client()
+  const ga = getGA4Client(propertyId)
   const property = `properties/${propertyId}`
   const paths = pathVariants(pageUrl)
 

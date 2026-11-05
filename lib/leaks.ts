@@ -73,6 +73,7 @@ export interface LeakAnalysis {
   notes: string[]
   generatedAt: string
   funnel?: FunnelAnalysis | null
+  adSpend?: { total: number; onBelowAveragePages: number; pages: { path: string; url: string; cost: number; clicks: number; conversions: number; pageConversionRate: number | null; belowAverage: boolean }[] } | null
 }
 
 const round = (n: number, dp = 0) => Math.round(n * 10 ** dp) / 10 ** dp
@@ -210,7 +211,7 @@ export async function fetchLeakAnalysis(params: {
   targetOverrides?: Partial<Record<string, number>>
   targetFloors?: Partial<Record<string, number>>
 }): Promise<LeakAnalysis> {
-  const ga = getGA4Client()
+  const ga = getGA4Client(params.propertyId)
   const property = `properties/${params.propertyId}`
   const conv = params.conversionEvent ? `keyEvents:${params.conversionEvent}` : 'keyEvents'
 

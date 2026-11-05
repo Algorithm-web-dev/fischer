@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase'
 import { fetchGA4Metric, evaluateGuardrail } from '@/lib/ga4'
 import { raiseAlert, resolveAlerts } from '@/lib/alerts'
+import { registerGoogleAuth } from '@/lib/google'
 
 export const maxDuration = 60
 
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest) {
   }
 
   const results = []
+  const { data: clients } = await supabase.from('clients').select('id, ga4_property_id, google_refresh_token').not('google_refresh_token', 'is', null)
+  for (const c of clients ?? []) registerGoogleAuth(c)
 
   for (const g of guardrails ?? []) {
     const metricResult = await fetchGA4Metric(g.ga4_property_id, g.ga4_metric)

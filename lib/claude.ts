@@ -20,7 +20,7 @@ export { anthropic, FISCHER_MODEL, FISCHER_SCHEDULED_MODEL } from './llm'
 
 export const EVIDENCE_SOURCES = [
   'screenshot_desktop', 'screenshot_mobile', 'layout_measurements', 'page_content',
-  'pagespeed', 'ga4', 'clarity', 'tracking'
+  'pagespeed', 'ga4', 'clarity', 'tracking', 'search_console', 'google_ads'
 ] as const
 export type EvidenceSource = typeof EVIDENCE_SOURCES[number]
 
@@ -176,6 +176,7 @@ export interface AuditContext {
   leak?: { page: PageLeak; siteRate: number; currency: string; periodDays: number } | null
   tracking?: import('./tracking').TrackingReport | null
   extraSections?: string[]      // additional evidence blocks (tracking check, funnels, journeys, past tests…)
+  extraSources?: EvidenceSource[]  // evidence sources those blocks make available (e.g. search_console)
 }
 
 export function buildAuditPrompt(ctx: AuditContext): string {
@@ -342,6 +343,7 @@ export function availableSources(ctx: AuditContext): Set<EvidenceSource> {
   if (ctx.ga4?.success) s.add('ga4')
   if (ctx.clarity?.success && (ctx.clarity.data?.totalSessions ?? 0) > 0) s.add('clarity')
   if (ctx.tracking) s.add('tracking')
+  for (const extra of ctx.extraSources ?? []) s.add(extra)
   return s
 }
 

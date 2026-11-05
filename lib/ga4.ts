@@ -1,25 +1,6 @@
-import { BetaAnalyticsDataClient } from '@google-analytics/data'
+import { getGA4Client } from './ga4-audit'
 
-let client: BetaAnalyticsDataClient | null = null
-
-/**
- * Lazily-created GA4 Data API client, authenticated via a service account.
- * The service account needs "Viewer" access granted on each client's GA4
- * property (Admin > Property Access Management > Add users) — this key
- * alone doesn't grant access to anything, per-property sharing still applies.
- */
-function getClient(): BetaAnalyticsDataClient {
-  if (client) return client
-
-  const credsJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-  if (!credsJson) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY not configured — guardrail checks cannot run without it.')
-  }
-
-  const credentials = JSON.parse(credsJson)
-  client = new BetaAnalyticsDataClient({ credentials })
-  return client
-}
+// Uses the shared per-property client (client's Google connection, else service account).
 
 export interface GA4MetricResult {
   success: boolean
@@ -38,7 +19,7 @@ export async function fetchGA4Metric(
   daysBack: number = 7
 ): Promise<GA4MetricResult> {
   try {
-    const analyticsClient = getClient()
+    const analyticsClient = getGA4Client(propertyId)
 
     const [response] = await analyticsClient.runReport({
       property: `properties/${propertyId}`,

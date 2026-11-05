@@ -85,7 +85,7 @@ export function analyseTrackingRequests(requests: string[], dataLayer: unknown[]
 
 /** Every event GA4 received in the last N days, with key-event flag. */
 export async function fetchGA4EventInventory(propertyId: string, days = 30): Promise<GA4EventRow[]> {
-  const [res] = await getGA4Client().runReport({
+  const [res] = await getGA4Client(propertyId).runReport({
     property: `properties/${propertyId}`,
     dateRanges: [lastNDays(days)],
     dimensions: [{ name: 'eventName' }, { name: 'isKeyEvent' }],

@@ -197,6 +197,11 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
                 Reaching {r.leaks.mobileGap.targetRate.toFixed(2)}% on mobile would add ~{fmtNum(r.leaks.mobileGap.lostConversions)} conversions per period{r.leaks.hasValue ? ` (≈${fmtMoney(r.leaks.mobileGap.value, cur)}/month at half the gap)` : ''}.
               </p>
             )}
+            {r.leaks.adSpend && r.leaks.adSpend.total > 0 && r.leaks.adSpend.onBelowAveragePages > 0 && (
+              <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8 }}>
+                <strong>Ad spend:</strong> {fmtMoney(r.leaks.adSpend.onBelowAveragePages, cur)} of {fmtMoney(r.leaks.adSpend.total, cur)} Google Ads spend ({Math.round((r.leaks.adSpend.onBelowAveragePages / r.leaks.adSpend.total) * 100)}%) went to pages converting below your site average. Fixing those pages makes the same budget produce more leads.
+              </p>
+            )}
             {r.leaks.paid.length > 0 && (
               <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8 }}>
                 <strong>Paid traffic on weak pages:</strong> {r.leaks.paid.map(p => `${p.channel} → ${p.page} converts at ${p.conversionRate.toFixed(2)}%`).join('; ')} — below the site average of {r.leaks.paid[0].siteRate.toFixed(2)}%. This is ad spend that isn&apos;t converting.

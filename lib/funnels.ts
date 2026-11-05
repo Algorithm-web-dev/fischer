@@ -145,7 +145,7 @@ export async function fetchFunnel(params: {
   valuePerConversion: number
   conversionEvent?: string | null
 }): Promise<FunnelAnalysis> {
-  const ga = getGA4Client()
+  const ga = getGA4Client(params.propertyId)
   const property = `properties/${params.propertyId}`
   const defs = params.kind === 'lead' ? LEAD_FUNNEL : ECOM_FUNNEL
   const events = Array.from(new Set([...defs.map(d => d.event).filter(e => e !== '__users__'), ...CONTACT_EVENTS, ...(params.conversionEvent ? [params.conversionEvent] : [])]))

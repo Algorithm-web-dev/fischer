@@ -14,6 +14,8 @@ import { raiseAlert, resolveAlerts } from './alerts'
 import { leadQualityReport, normalisePath } from './lead-quality'
 import { libraryPromptSection } from './test-library'
 import { decryptSecret } from './secrets'
+import { registerGoogleAuth } from './google'
+import { fetchSearchQueries, formatSearchForPrompt } from './search-console'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -22,6 +24,10 @@ export interface ClientRow {
   name: string
   primary_url?: string | null
   auto_track_leaks?: boolean | null
+  google_refresh_token?: string | null
+  gsc_site_url?: string | null
+  google_ads_customer_id?: string | null
+  google_ads_login_customer_id?: string | null
   industry?: string | null
   currency?: string | null
   avg_order_value?: number | null
@@ -58,6 +64,7 @@ export async function runAuditPipeline(params: {
 }): Promise<PipelineOutcome> {
   const { supabase, auditId, input, client } = params
   const model = params.trigger === 'scheduled' ? FISCHER_SCHEDULED_MODEL : FISCHER_MODEL
+  registerGoogleAuth(client)
 
   const autoViewports: ViewportName[] = []
   if (!input.manualScreenshotDesktop) autoViewports.push('desktop')
@@ -100,11 +107,14 @@ export async function runAuditPipeline(params: {
     ? await loadChangesSince(supabase, client.id, input.pageUrl, previous.completed_at)
     : []
 
-  const [leak, tracking, leadSection, librarySection] = await Promise.all([
+  const [leak, tracking, leadSection, librarySection, searchSection] = await Promise.all([
     client ? loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : Promise.resolve(null),
     buildTrackingReport({ capture, pageUrl: input.pageUrl, businessGoal: input.businessGoal, client }).catch(() => null),
     client ? leadSectionFor(supabase, client.id, input.pageUrl).catch(() => '') : Promise.resolve(''),
-    libraryPromptSection(supabase, client?.industry).catch(() => '')
+    libraryPromptSection(supabase, client?.industry).catch(() => ''),
+    client?.gsc_site_url && client.google_refresh_token
+      ? fetchSearchQueries(client, { pageUrl: input.pageUrl, range: lastNDays(90) }).then(formatSearchForPrompt).catch(() => '')
+      : Promise.resolve('')
   ])
 
   const result = await runFischerAudit({
@@ -120,7 +130,8 @@ export async function runAuditPipeline(params: {
     changesSincePrevious,
     leak: leak && 'page' in leak && leak.page ? leak as any : null,
     tracking,
-    extraSections: [leak?.funnelSection ?? '', leadSection, librarySection]
+    extraSections: [leak?.funnelSection ?? '', leadSection, librarySection, searchSection],
+    extraSources: searchSection && !searchSection.includes('no search queries') ? ['search_console'] : []
   }, model, { feature: params.trigger === 'scheduled' ? 'audit_scheduled' : 'audit', clientId: client?.id ?? null, auditId })
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)

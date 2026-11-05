@@ -7,6 +7,7 @@ import { Backlog } from '@/components/tabs/Backlog'
 import { Guardrails } from '@/components/tabs/Guardrails'
 import { Competitors } from '@/components/tabs/Competitors'
 import { ClientAccess } from '@/components/ClientAccess'
+import { GoogleConnect } from '@/components/GoogleConnect'
 
 type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'backlog' | 'changes' | 'tests' | 'guardrails' | 'competitors' | 'reports' | 'settings'
 
@@ -217,6 +218,16 @@ function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
               </div>))}
             {!client.primary_url && <p style={{ fontSize: 12, color: T.warn }}>Set the client&apos;s website in Settings so pages can be tracked with one click.</p>}
           </div>
+          {a.adSpend && a.adSpend.total > 0 && (
+            <div style={cardStyle}>
+              <h3 style={{ marginTop: 0 }}>Google Ads spend by landing page</h3>
+              <p style={{ margin: '0 0 10px' }}><strong style={{ color: T.bad }}>{money(a.adSpend.onBelowAveragePages)}</strong> of {money(a.adSpend.total)} ad spend ({Math.round((a.adSpend.onBelowAveragePages / a.adSpend.total) * 100)}%) went to pages converting below the site average ({a.site.conversionRate}%).</p>
+              {a.adSpend.pages.slice(0, 10).map((p: any) => (
+                <div key={p.path} style={{ display: 'flex', gap: 10, fontSize: 13, padding: '4px 0', borderTop: `1px solid ${T.line}` }}>
+                  <span style={{ flex: 1, wordBreak: 'break-all' }}>{p.path}</span><span>{money(p.cost)}</span><span style={{ width: 110, color: p.belowAverage ? T.bad : T.muted }}>{p.pageConversionRate != null ? `${p.pageConversionRate}% CVR` : '—'}</span>
+                </div>))}
+            </div>
+          )}
           {a.funnel && <FunnelCard f={a.funnel} money={a.valuePerConversion ? money : null} />}
           {a.mobileGap && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Mobile gap</h3><p style={{ margin: 0 }}>Mobile converts at <strong>{a.mobileGap.mobileRate}%</strong> vs <strong>{a.mobileGap.desktopRate}%</strong> on desktop. Reaching {a.mobileGap.targetRate}% (70% of desktop) on {fmt(a.mobileGap.mobileSessions)} mobile sessions = {fmt(a.mobileGap.lostConversions, 1)} more conversions{a.valuePerConversion ? `, ≈${money(a.mobileGap.value * scale)}/month at half the gap` : ''}.</p></div>}
           {a.paidTraffic.length > 0 && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Paid traffic on under-performing pages</h3>
@@ -650,6 +661,7 @@ function Settings({ client, reload }: { client: any; reload: () => void }) {
           </div>
         ))}
       </div>
+      <GoogleConnect client={client} onChange={reload} />
       <UsageCard clientId={client.id} />
       <TrackingKit client={client} />
       <div style={cardStyle}>
