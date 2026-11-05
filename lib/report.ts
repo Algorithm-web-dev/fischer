@@ -6,6 +6,7 @@ import type { GA4Totals } from './ga4-audit'
 import { monthRange } from './ga4-audit'
 import { measureChangeImpact, periodToDate, shiftPeriod, type ChangeImpact } from './snapshots'
 import { pctChange, type TestResultStats } from './stats'
+import type { LeakAnalysis } from './leaks'
 
 export interface KpiValue { current: number | null; previous: number | null; changePct: number | null }
 
@@ -54,6 +55,16 @@ export interface MonthlyReport {
   tests: { id: string; name: string; status: string; pageUrl: string | null; hypothesis: string; startDate: string | null; endDate: string | null; stats: TestResultStats | null; winner: string | null; resultSummary: string | null }[]
   nextMonth: string[]
   dataNotes: string[]
+  leaks: {
+    rangeLabel: string
+    siteRate: number
+    recoverableMonthly: number
+    hasValue: boolean
+    topPages: { page: string; conversionRate: number; share: number; worstDevice: string | null; recoverableMonthly: number }[]
+    byDevice: { device: string; share: number }[]
+    mobileGap: LeakAnalysis['mobileGap']
+    paid: LeakAnalysis['paidTraffic']
+  } | null
 }
 
 const monthLabel = (period: string) =>
@@ -174,6 +185,24 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     stats: tb.stats ?? null, winner: tb.winner ?? null, resultSummary: tb.result_summary ?? null
   }))
 
+  // Leak map covering this period (prefer the calendar-month analysis built by the monthly job)
+  const { data: leakRows } = await supabase.from('leak_analyses').select('data, start_date, end_date')
+    .eq('client_id', clientId).lte('start_date', range.endDate).gte('end_date', range.startDate)
+    .order('created_at', { ascending: false }).limit(5)
+  const leakRow = (leakRows ?? []).find(l => l.start_date === range.startDate) ?? leakRows?.[0]
+  const la = leakRow?.data as LeakAnalysis | undefined
+  const scale = la ? 30 / Math.max(1, la.periodDays) : 1
+  const leaks: MonthlyReport['leaks'] = la ? {
+    rangeLabel: `${la.range.startDate} – ${la.range.endDate}`,
+    siteRate: la.site.conversionRate,
+    recoverableMonthly: la.totals.recoverableMonthly,
+    hasValue: la.valuePerConversion > 0,
+    topPages: la.pages.slice(0, 5).map(p => ({ page: p.page, conversionRate: p.conversionRate, share: p.share, worstDevice: p.worstDevice, recoverableMonthly: Math.round(p.recoverableValue * scale) })),
+    byDevice: la.byDevice.map(d => ({ device: d.device, share: d.share })),
+    mobileGap: la.mobileGap ? { ...la.mobileGap, value: Math.round(la.mobileGap.value * scale) } : null,
+    paid: la.paidTraffic.slice(0, 3).map(p => ({ ...p, value: Math.round(p.value * scale) }))
+  } : null
+
   const latestOverall = (audits ?? [])[0]?.output as AuditResult | undefined
   const nextMonth = [
     ...(tests ?? []).filter(tb => tb.status === 'approved' || tb.status === 'draft').slice(0, 3).map(tb => `A/B test: ${tb.hypothesis_name}`),
@@ -219,6 +248,7 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     changes: changeRows,
     tests: testRows,
     nextMonth,
-    dataNotes
+    dataNotes,
+    leaks
   }
 }

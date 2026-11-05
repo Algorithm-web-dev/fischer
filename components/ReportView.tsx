@@ -145,6 +145,44 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
           </Section>
         )}
 
+        {r.leaks && r.leaks.topPages.length > 0 && (
+          <Section title="Where revenue is leaking" kicker="Opportunity map">
+            <p style={{ lineHeight: 1.6, marginTop: 0 }}>
+              {r.leaks.hasValue
+                ? <>Bringing the weakest pages up to the site&apos;s own average ({r.leaks.siteRate.toFixed(2)}%) — closing half of each gap — is worth about <strong>{fmtMoney(r.leaks.recoverableMonthly, cur)} per month</strong>.</>
+                : <>These pages convert below the site&apos;s own average of {r.leaks.siteRate.toFixed(2)}%. Set a value per conversion to see the rand value.</>}
+              {r.leaks.byDevice[0] && <> {r.leaks.byDevice[0].share.toFixed(0)}% of the gap is on <strong>{r.leaks.byDevice[0].device}</strong>.</>}
+            </p>
+            <div className="rv-scroll"><table className="rv-table">
+              <thead><tr><th>Page</th><th>Conv. rate</th><th>Share of gap</th><th>Worst on</th>{r.leaks.hasValue && <th>Recoverable / month</th>}</tr></thead>
+              <tbody>{r.leaks.topPages.map(p => (
+                <tr key={p.page}>
+                  <td style={{ wordBreak: 'break-all' }}>{p.page}</td>
+                  <td>{p.conversionRate.toFixed(2)}%</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 80, height: 6, background: C.line, borderRadius: 3 }}><div style={{ width: `${Math.min(100, p.share)}%`, height: 6, background: C.bad, borderRadius: 3 }} /></div>
+                      {p.share.toFixed(0)}%
+                    </div>
+                  </td>
+                  <td>{p.worstDevice ?? '—'}</td>
+                  {r.leaks!.hasValue && <td>{fmtMoney(p.recoverableMonthly, cur)}</td>}
+                </tr>))}
+              </tbody></table></div>
+            {r.leaks.mobileGap && (
+              <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8 }}>
+                <strong>Mobile gap:</strong> mobile converts at {r.leaks.mobileGap.mobileRate.toFixed(2)}% vs {r.leaks.mobileGap.desktopRate.toFixed(2)}% on desktop.
+                Reaching {r.leaks.mobileGap.targetRate.toFixed(2)}% on mobile would add ~{fmtNum(r.leaks.mobileGap.lostConversions)} conversions per period{r.leaks.hasValue ? ` (≈${fmtMoney(r.leaks.mobileGap.value, cur)}/month at half the gap)` : ''}.
+              </p>
+            )}
+            {r.leaks.paid.length > 0 && (
+              <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8 }}>
+                <strong>Paid traffic on weak pages:</strong> {r.leaks.paid.map(p => `${p.channel} → ${p.page} converts at ${p.conversionRate.toFixed(2)}%`).join('; ')} — below the site average of {r.leaks.paid[0].siteRate.toFixed(2)}%. This is ad spend that isn&apos;t converting.
+              </p>
+            )}
+          </Section>
+        )}
+
         <Section title="Changes made and their impact" kicker="What we did">
           {r.changes.length === 0 ? <p style={{ color: C.muted }}>No changes were logged this month.</p> : (
             <div className="rv-scroll"><table className="rv-table">

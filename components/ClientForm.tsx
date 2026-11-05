@@ -6,6 +6,7 @@ export interface ClientFormValues {
   name: string; primaryUrl: string; tier: string; industry: string; currency: string; avgOrderValue: string
   ga4PropertyId: string; ga4ConversionEvent: string; clarityProjectId: string; clarityApiToken: string
   reportLogoUrl: string; reportContactName: string; reportContactEmail: string
+  autoTrackLeaks: boolean
 }
 
 export function toFormValues(c: any): ClientFormValues {
@@ -14,7 +15,8 @@ export function toFormValues(c: any): ClientFormValues {
     currency: c?.currency ?? 'ZAR', avgOrderValue: c?.avg_order_value != null ? String(c.avg_order_value) : '',
     ga4PropertyId: c?.ga4_property_id ?? '', ga4ConversionEvent: c?.ga4_conversion_event ?? '',
     clarityProjectId: c?.clarity_project_id ?? '', clarityApiToken: c?.clarity_api_token ?? '',
-    reportLogoUrl: c?.report_logo_url ?? '', reportContactName: c?.report_contact_name ?? '', reportContactEmail: c?.report_contact_email ?? ''
+    reportLogoUrl: c?.report_logo_url ?? '', reportContactName: c?.report_contact_name ?? '', reportContactEmail: c?.report_contact_email ?? '',
+    autoTrackLeaks: !!c?.auto_track_leaks
   }
 }
 
@@ -62,6 +64,10 @@ export function ClientForm({ initial, onSubmit, submitLabel }: { initial?: Clien
         <Field label="Account manager"><input style={inputStyle} value={v.reportContactName} onChange={set('reportContactName')} /></Field>
         <Field label="Account manager email"><input style={inputStyle} value={v.reportContactEmail} onChange={set('reportContactEmail')} type="email" /></Field>
       </div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginBottom: 14 }}>
+        <input type="checkbox" checked={v.autoTrackLeaks} onChange={e => setV({ ...v, autoTrackLeaks: e.target.checked })} />
+        Automatically track the top 3 leaking pages each month (requires GA4 and a website URL)
+      </label>
       {error && <div style={{ color: T.bad, marginBottom: 10 }}>{error}</div>}
       <Button type="submit" disabled={saving}>{saving ? 'Saving…' : submitLabel}</Button>
     </form>

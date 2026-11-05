@@ -7,12 +7,15 @@ import { fetchGA4AuditData, lastNDays, type GA4AuditData } from './ga4-audit'
 import { aggregateStoredDays, fetchClarityData, type ClarityDaily, type ClarityResult } from './clarity'
 import { runFischerAudit, FISCHER_MODEL, type AuditInput, type AuditResult, type PreviousAuditContext, type ChangeLogEntry } from './claude'
 import { fingerprintPage, diffFingerprints, type PageFingerprint, type PageDiff } from './page-diff'
+import { leakForUrl, type LeakAnalysis } from './leaks'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
 export interface ClientRow {
   id: string
   name: string
+  primary_url?: string | null
+  auto_track_leaks?: boolean | null
   industry?: string | null
   currency?: string | null
   avg_order_value?: number | null
@@ -87,6 +90,8 @@ export async function runAuditPipeline(params: {
     ? await loadChangesSince(supabase, client.id, input.pageUrl, previous.completed_at)
     : []
 
+  const leak = client ? await loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : null
+
   const result = await runFischerAudit({
     input,
     capture,
@@ -97,7 +102,8 @@ export async function runAuditPipeline(params: {
     currency: client?.currency,
     valuePerConversion: client?.avg_order_value,
     previous: previous ? toPreviousContext(previous) : null,
-    changesSincePrevious
+    changesSincePrevious,
+    leak
   })
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
@@ -195,6 +201,17 @@ function stripManual(input: AuditInput): AuditInput {
 export function stripDataPrefix(base64: string): string {
   const i = base64.indexOf(',')
   return base64.startsWith('data:') && i !== -1 ? base64.slice(i + 1) : base64
+}
+
+async function loadLeak(supabase: SupabaseClient, clientId: string, pageUrl: string, currency: string) {
+  // Only use a recent analysis (≤ 45 days old)
+  const since = new Date(Date.now() - 45 * 86400000).toISOString()
+  const { data } = await supabase.from('leak_analyses').select('data')
+    .eq('client_id', clientId).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
+  const analysis = data?.[0]?.data as LeakAnalysis | undefined
+  const page = leakForUrl(analysis, pageUrl)
+  if (!analysis || !page) return null
+  return { page, siteRate: analysis.site.conversionRate, currency, periodDays: analysis.periodDays }
 }
 
 async function loadClarity(supabase: SupabaseClient, client: ClientRow | null, pageUrl: string): Promise<ClarityResult | null> {

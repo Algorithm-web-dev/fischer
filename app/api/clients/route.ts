@@ -59,7 +59,8 @@ export async function POST(req: NextRequest) {
       ga4_conversion_event: body.ga4ConversionEvent ?? null,
       report_logo_url: body.reportLogoUrl ?? null,
       report_contact_name: body.reportContactName ?? null,
-      report_contact_email: body.reportContactEmail ?? null
+      report_contact_email: body.reportContactEmail ?? null,
+      auto_track_leaks: !!body.autoTrackLeaks
     })
     .select()
     .single()
@@ -95,6 +96,7 @@ export async function PATCH(req: NextRequest) {
   if (body.ga4ConversionEvent !== undefined) updates.ga4_conversion_event = body.ga4ConversionEvent || null
   if (body.reportLogoUrl !== undefined) updates.report_logo_url = body.reportLogoUrl || null
   if (body.reportContactName !== undefined) updates.report_contact_name = body.reportContactName || null
+  if (body.autoTrackLeaks !== undefined) updates.auto_track_leaks = !!body.autoTrackLeaks
   if (body.reportContactEmail !== undefined) updates.report_contact_email = body.reportContactEmail || null
 
   const { data, error } = await supabase

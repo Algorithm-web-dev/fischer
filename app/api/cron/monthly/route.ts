@@ -3,6 +3,8 @@ import { createSupabaseServiceClient } from '@/lib/supabase'
 import { isCronAuthorized } from '@/lib/api'
 import { buildMonthlySnapshot, previousPeriod, periodToDate } from '@/lib/snapshots'
 import { runAuditPipeline } from '@/lib/audit-pipeline'
+import { runLeakAnalysis, trackTopLeaks } from '@/lib/leak-store'
+import { monthRange } from '@/lib/ga4-audit'
 
 export const maxDuration = 300
 
@@ -45,6 +47,12 @@ export async function GET(req: NextRequest) {
       try {
         const s = await buildMonthlySnapshot(supabase, c, p)
         log.push({ client: c.name, period: p, snapshot: 'ok', errors: s.errors })
+        // First build of last month's snapshot → also build last month's leak map
+        if (p === prev && !has(p) && c.ga4_property_id) {
+          const leaks = await runLeakAnalysis(supabase, c, monthRange(prev))
+          const tracked = c.auto_track_leaks ? await trackTopLeaks(supabase, c.id, leaks.data, 3) : []
+          log.push({ client: c.name, leaks: leaks.data.totals.recoverableMonthly, autoTracked: tracked })
+        }
       } catch (err) {
         log.push({ client: c.name, period: p, snapshot: 'failed', error: err instanceof Error ? err.message : String(err) })
       }

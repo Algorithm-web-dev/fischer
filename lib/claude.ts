@@ -9,6 +9,7 @@ import type { ClarityResult } from './clarity'
 import { formatGA4ForPrompt } from './ga4-audit'
 import { formatClarityForPrompt } from './clarity'
 import { computeRevenueImpact, planTest, type RevenueImpact, type TestPlan } from './stats'
+import type { PageLeak } from './leaks'
 
 export { anthropic, FISCHER_MODEL } from './llm'
 
@@ -171,6 +172,8 @@ export interface AuditContext {
   valuePerConversion?: number | null
   previous?: PreviousAuditContext | null
   changesSincePrevious?: ChangeLogEntry[]
+  leak?: { page: PageLeak; siteRate: number; currency: string; periodDays: number } | null
+  extraSections?: string[]      // additional evidence blocks (tracking check, funnels, journeys, past tests…)
 }
 
 export function buildAuditPrompt(ctx: AuditContext): string {
@@ -231,10 +234,24 @@ ${ctx.changesSincePrevious.map(c => `- ${c.change_date}: ${c.title}${c.descripti
     parts.push(`**This is the first audit of this page** — previousIssueFollowUp must be empty.`)
   }
 
+  if (ctx.leak) parts.push(formatLeakSection(ctx.leak))
+  for (const extra of ctx.extraSections ?? []) if (extra) parts.push(extra)
+
   if (input.additionalContext) parts.push(`**ADDITIONAL CONTEXT FROM THE ACCOUNT MANAGER:**\n${input.additionalContext}`)
 
   parts.push(`Cross-reference the sources. Findings confirmed by more than one source (e.g. Clarity dead clicks + a non-clickable element that looks like a button in the screenshot) are your highest-confidence findings.`)
   return parts.join('\n\n')
+}
+
+function formatLeakSection(l: NonNullable<AuditContext['leak']>): string {
+  const p = l.page
+  const money = (n: number) => `${l.currency === 'ZAR' ? 'R' : l.currency + ' '}${Math.round(n).toLocaleString('en-ZA')}`
+  const cells = p.cells.filter(c => c.lostConversions > 0)
+    .map(c => `${c.device}: ${c.conversionRate}% vs site ${c.targetRate}% on ${c.sessions.toLocaleString()} sessions (≈${c.lostConversions} conversions lost)`)
+  return `**WHY THIS PAGE WAS PRIORITISED — REVENUE LEAK (GA4, last ${l.periodDays} days):**
+This page converts at ${p.conversionRate}% vs the site average of ${l.siteRate}%. ${p.share}% of the site's measurable conversion gap sits here${p.recoverableValue ? `, roughly ${money(p.recoverableValue)} recoverable per period` : ''}.
+${cells.map(c => `- ${c}`).join('\n')}
+Explain this gap. Your highest-severity findings should account for the device(s) where the loss is concentrated${p.worstDevice ? ` (worst: ${p.worstDevice})` : ''}.`
 }
 
 function formatViewport(v: ViewportCapture): string {

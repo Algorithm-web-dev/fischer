@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
 import { ClientForm, toFormValues } from '@/components/ClientForm'
 
-type Tab = 'overview' | 'pages' | 'changes' | 'tests' | 'reports' | 'settings'
+type Tab = 'overview' | 'leaks' | 'pages' | 'changes' | 'tests' | 'reports' | 'settings'
 
 const lastMonth = () => {
   const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1)
@@ -33,7 +33,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
   }, [params.id])
   useEffect(() => { load() }, [load])
 
-  const tabs: [Tab, string][] = [['overview', 'Overview'], ['pages', 'Pages & audits'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['reports', 'Reports'], ['settings', 'Settings']]
+  const tabs: [Tab, string][] = [['overview', 'Overview'], ['leaks', 'Revenue leaks'], ['pages', 'Pages & audits'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['reports', 'Reports'], ['settings', 'Settings']]
 
   return (
     <Page title={client?.name ?? 'Client'} actions={client && <div style={{ display: 'flex', gap: 6 }}>
@@ -49,6 +49,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
       {!client || !trends ? <p style={{ color: T.muted }}>Loading…</p> : (
         <>
           {tab === 'overview' && <Overview trends={trends} />}
+          {tab === 'leaks' && <Leaks client={client} onTracked={() => setTab('pages')} />}
           {tab === 'pages' && <Pages client={client} trends={trends} reload={load} />}
           {tab === 'changes' && <Changes clientId={client.id} />}
           {tab === 'tests' && <Tests clientId={client.id} />}
@@ -107,6 +108,84 @@ function Overview({ trends }: { trends: any }) {
           </div>
         ))}
       </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------- Revenue leaks
+function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
+  const [analysis, setAnalysis] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [running, setRunning] = useState(false)
+  const [days, setDays] = useState(30)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState<string | null>(null)
+
+  useEffect(() => { api(`/api/clients/${client.id}/leaks`).then(d => setAnalysis(d.analysis)).finally(() => setLoading(false)) }, [client.id])
+
+  async function run(trackTop = 0) {
+    setRunning(true); setError('')
+    try {
+      const d = await api(`/api/clients/${client.id}/leaks`, { method: 'POST', json: { days, trackTop } })
+      setAnalysis(d.analysis)
+      if (trackTop && d.tracked?.length) { alert(`Now tracking: ${d.tracked.join(', ')}`); onTracked() }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
+    finally { setRunning(false) }
+  }
+
+  async function trackPage(url: string) {
+    await api('/api/tracked-pages', { method: 'POST', json: { clientId: client.id, pageUrl: url } })
+    alert(`Tracking ${url} — run its baseline audit from Pages & audits.`)
+  }
+
+  if (!client.integrations.ga4) return <div style={cardStyle}><p style={{ margin: 0, color: T.muted }}>Connect GA4 in Settings to build a revenue leak map.</p></div>
+  const a = analysis?.data
+  const cur = client.currency === 'ZAR' || !client.currency ? 'R' : client.currency + ' '
+  const money = (n: number) => `${cur}${Math.round(n).toLocaleString('en-ZA')}`
+  const scale = a ? 30 / Math.max(1, a.periodDays) : 1
+
+  return (
+    <>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+          <Field label="Look back"><select style={{ ...inputStyle, width: 140 }} value={days} onChange={e => setDays(Number(e.target.value))}><option value={30}>30 days</option><option value={60}>60 days</option><option value={90}>90 days</option></select></Field>
+          <div style={{ marginBottom: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button onClick={() => run(0)} disabled={running}>{running ? 'Analysing GA4…' : a ? 'Refresh leak map' : 'Build leak map'}</Button>
+            {a && <Button kind="ghost" onClick={() => run(3)} disabled={running}>Track top 3 leaking pages</Button>}
+          </div>
+        </div>
+        <p style={{ fontSize: 12, color: T.muted, margin: 0 }}>Every landing page is split by device and compared with the site&apos;s own conversion rate for that device. “Recoverable” assumes we close half of each gap. Pages with fewer than 100 sessions per device are ignored as noise.</p>
+        {error && <div style={{ color: T.bad, marginTop: 8 }}>{error}</div>}
+      </div>
+      {loading ? <p style={{ color: T.muted }}>Loading…</p> : !a ? null : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 18 }}>
+            <div style={{ ...cardStyle, marginBottom: 0 }}><div style={labelStyle}>Recoverable per month</div><div style={{ fontSize: 30, fontWeight: 700, color: T.gold }}>{a.valuePerConversion ? money(a.totals.recoverableMonthly) : '—'}</div><div style={{ fontSize: 12, color: T.muted }}>{a.valueBasis === 'ga4_revenue' ? 'value from GA4 revenue' : a.valueBasis === 'client_setting' ? `at ${money(a.valuePerConversion)} per conversion` : 'set a value per conversion'}</div></div>
+            <div style={{ ...cardStyle, marginBottom: 0 }}><div style={labelStyle}>Site conversion rate</div><div style={{ fontSize: 30, fontWeight: 700 }}>{a.site.conversionRate}%</div><div style={{ fontSize: 12, color: T.muted }}>{fmt(a.site.conversions)} from {fmt(a.site.sessions)} sessions · {a.range.startDate} → {a.range.endDate}</div></div>
+            <div style={{ ...cardStyle, marginBottom: 0 }}><div style={labelStyle}>Gap by device</div>{a.byDevice.map((d: any) => <div key={d.device} style={{ fontSize: 14 }}>{d.device}: <strong>{d.share}%</strong> <span style={{ color: T.muted }}>({fmt(a.site.byDevice[d.device]?.conversionRate, 2)}% CVR)</span></div>)}</div>
+          </div>
+          {a.notes.length > 0 && <div style={{ ...cardStyle, borderColor: T.warn }}>{a.notes.map((n: string, i: number) => <div key={i} style={{ color: T.warn, fontSize: 13 }}>{n}</div>)}</div>}
+          <div style={cardStyle}>
+            <h3 style={{ marginTop: 0 }}>Leaking pages</h3>
+            {a.pages.length === 0 ? <p style={{ color: T.muted }}>No page converts meaningfully below the site average. 🎉</p> : a.pages.map((p: any) => (
+              <div key={p.page} style={{ borderTop: `1px solid ${T.line}`, padding: '10px 0' }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 260px', wordBreak: 'break-all' }}><strong>{p.page}</strong><div style={{ fontSize: 12, color: T.muted }}>{fmt(p.sessions)} sessions · {p.conversionRate}% CVR · worst on {p.worstDevice ?? '—'}</div></div>
+                  <div style={{ width: 150 }}><div style={{ height: 6, background: T.line, borderRadius: 3 }}><div style={{ width: `${Math.min(100, p.share)}%`, height: 6, background: T.bad, borderRadius: 3 }} /></div><div style={{ fontSize: 12, color: T.muted }}>{p.share}% of the gap</div></div>
+                  <div style={{ width: 130, textAlign: 'right', fontWeight: 700, color: T.gold }}>{a.valuePerConversion ? `${money(p.recoverableValue * scale)}/mo` : `${fmt(p.cells.reduce((s: number, c: any) => s + c.lostConversions, 0), 1)} conv.`}</div>
+                  <Button kind="ghost" onClick={() => setOpen(open === p.page ? null : p.page)}>{open === p.page ? 'Hide' : 'Devices'}</Button>
+                  {p.url && <Button kind="ghost" onClick={() => trackPage(p.url)}>Track</Button>}
+                </div>
+                {open === p.page && <div style={{ fontSize: 13, marginTop: 8 }}>{p.cells.map((c: any) => <div key={c.device}>{c.device}: {c.conversionRate}% vs {c.targetRate}% target on {fmt(c.sessions)} sessions → {c.lostConversions} conversions lost</div>)}</div>}
+              </div>))}
+            {!client.primary_url && <p style={{ fontSize: 12, color: T.warn }}>Set the client&apos;s website in Settings so pages can be tracked with one click.</p>}
+          </div>
+          {a.mobileGap && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Mobile gap</h3><p style={{ margin: 0 }}>Mobile converts at <strong>{a.mobileGap.mobileRate}%</strong> vs <strong>{a.mobileGap.desktopRate}%</strong> on desktop. Reaching {a.mobileGap.targetRate}% (70% of desktop) on {fmt(a.mobileGap.mobileSessions)} mobile sessions = {fmt(a.mobileGap.lostConversions, 1)} more conversions{a.valuePerConversion ? `, ≈${money(a.mobileGap.value * scale)}/month at half the gap` : ''}.</p></div>}
+          {a.paidTraffic.length > 0 && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Paid traffic on under-performing pages</h3>
+            {a.paidTraffic.map((p: any, i: number) => <div key={i} style={{ fontSize: 14, padding: '4px 0' }}>{p.channel} → <strong>{p.page}</strong>: {p.conversionRate}% vs site {p.siteRate}% on {fmt(p.sessions)} sessions{a.valuePerConversion ? ` · ≈${money(p.value * scale)}/mo` : ''}</div>)}
+            <p style={{ fontSize: 12, color: T.muted }}>Ad spend landing on these pages converts below average — fix the page or the ad-to-page message match before buying more traffic.</p></div>}
+        </>
+      )}
     </>
   )
 }
