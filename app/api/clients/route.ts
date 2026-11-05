@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
   const clients = (data || []).map(c => ({
     ...c,
     clarity_api_token: c.clarity_api_token ? '••••configured' : null,
+    lead_ingest_key_hash: undefined,
     integrations: {
       ga4: !!c.ga4_property_id,
       clarity: !!(c.clarity_project_id && c.clarity_api_token)

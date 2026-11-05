@@ -4,6 +4,7 @@ import { lastNDays, type DateRange } from './ga4-audit'
 import type { ClientRow } from './audit-pipeline'
 import { benchmarkTargets } from './benchmarks'
 import { fetchFunnel } from './funnels'
+import { leadQualityReport } from './lead-quality'
 
 export interface StoredLeakAnalysis { id: string; created_at: string; data: LeakAnalysis }
 
@@ -21,15 +22,18 @@ export async function runLeakAnalysis(
 ): Promise<StoredLeakAnalysis> {
   if (!client.ga4_property_id) throw new Error('Connect GA4 for this client to build a revenue leak map.')
   const targets = await benchmarkTargets(supabase, client).catch(() => undefined)
+  // No value per conversion set? Use real revenue per lead from the CRM (90 days, ≥ 20 leads).
+  const crm = client.avg_order_value ? null : await leadQualityReport(supabase, client.id, 90).catch(() => null)
   const data = await fetchLeakAnalysis({
     propertyId: client.ga4_property_id,
     range,
     conversionEvent: client.ga4_conversion_event,
-    valuePerConversion: client.avg_order_value,
+    valuePerConversion: client.avg_order_value || crm?.valuePerLead || null,
     siteOrigin: originOf(client.primary_url),
     targetOverrides: targets?.overrides
   })
   if (targets?.note) data.notes.push(targets.note)
+  if (!client.avg_order_value && crm?.valuePerLead) data.notes.push(`Value per conversion taken from the CRM: ${crm.valuePerLead} revenue per lead over 90 days.`)
   // E-commerce if GA4 records revenue; otherwise treat as lead generation.
   const kind = data.valueBasis === 'ga4_revenue' ? 'ecommerce' : 'lead'
   data.funnel = await fetchFunnel({

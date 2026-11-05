@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
 import { ClientForm, toFormValues } from '@/components/ClientForm'
 
-type Tab = 'overview' | 'leaks' | 'pages' | 'changes' | 'tests' | 'reports' | 'settings'
+type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'changes' | 'tests' | 'reports' | 'settings'
 
 const lastMonth = () => {
   const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1)
@@ -39,7 +39,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
   }, [params.id])
   useEffect(() => { load() }, [load])
 
-  const tabs: [Tab, string][] = [['overview', 'Overview'], ['leaks', 'Revenue leaks'], ['pages', 'Pages & audits'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['reports', 'Reports'], ['settings', 'Settings']]
+  const tabs: [Tab, string][] = [['overview', 'Overview'], ['leaks', 'Revenue leaks'], ['leads', 'Lead quality'], ['pages', 'Pages & audits'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['reports', 'Reports'], ['settings', 'Settings']]
 
   return (
     <Page title={client?.name ?? 'Client'} actions={client && <div style={{ display: 'flex', gap: 6 }}>
@@ -68,6 +68,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
         <>
           {tab === 'overview' && <Overview trends={trends} />}
           {tab === 'leaks' && <Leaks client={client} onTracked={() => setTab('pages')} />}
+          {tab === 'leads' && <Leads client={client} />}
           {tab === 'pages' && <Pages client={client} trends={trends} reload={load} />}
           {tab === 'changes' && <Changes clientId={client.id} />}
           {tab === 'tests' && <Tests clientId={client.id} />}
@@ -205,6 +206,59 @@ function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
             <p style={{ fontSize: 12, color: T.muted }}>Ad spend landing on these pages converts below average — fix the page or the ad-to-page message match before buying more traffic.</p></div>}
         </>
       )}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------- Lead quality
+function Leads({ client }: { client: any }) {
+  const [days, setDays] = useState(90)
+  const [data, setData] = useState<any>(null)
+  const [key, setKey] = useState('')
+  useEffect(() => { api(`/api/clients/${client.id}/leads?days=${days}`).then(setData).catch(() => setData({ report: null })) }, [client.id, days])
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const r = data?.report
+  const cur = client.currency === 'ZAR' || !client.currency ? 'R' : client.currency + ' '
+  const example = `curl -X POST ${origin}/api/leads/ingest \\
+  -H "Authorization: Bearer ${key || 'fsk_…'}" -H "Content-Type: application/json" \\
+  -d '{"externalId":"CRM-1042","createdAt":"2026-11-03T09:12:00Z","status":"won","value":45000,
+       "landingPage":"/quote","utmSource":"google","utmMedium":"cpc","utmCampaign":"solar-brand"}'`
+  const table = (rows: any[], label: string) => (
+    <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <thead><tr>{[label, 'Leads', 'Qualified', 'Won', 'Revenue', 'Rev / lead'].map(h => <th key={h} style={{ ...labelStyle, textAlign: 'left', padding: 8, borderBottom: `1px solid ${T.line}` }}>{h}</th>)}</tr></thead>
+      <tbody>{rows.map(x => (
+        <tr key={x.key} style={{ borderBottom: `1px solid ${T.line}` }}>
+          <td style={{ padding: 8, wordBreak: 'break-all' }}>{x.key}</td><td style={{ padding: 8 }}>{fmt(x.leads)}</td>
+          <td style={{ padding: 8, color: r && x.leads >= 10 ? (x.qualifiedRate < r.totals.qualifiedRate * 0.5 ? T.bad : x.qualifiedRate > r.totals.qualifiedRate * 1.5 ? T.good : T.text) : T.text }}>{x.qualifiedRate}%</td>
+          <td style={{ padding: 8 }}>{fmt(x.won)}</td><td style={{ padding: 8 }}>{x.revenue ? cur + fmt(x.revenue) : '—'}</td><td style={{ padding: 8 }}>{x.revenuePerLead ? cur + fmt(x.revenuePerLead) : '—'}</td>
+        </tr>))}</tbody></table></div>
+  )
+  return (
+    <>
+      {r ? (
+        <>
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'end', flexWrap: 'wrap' }}>
+              <Field label="Period"><select style={{ ...inputStyle, width: 140 }} value={days} onChange={e => setDays(Number(e.target.value))}>{[30, 90, 180, 365].map(d => <option key={d} value={d}>{d} days</option>)}</select></Field>
+              <div style={{ marginBottom: 14, fontSize: 14 }}><strong>{fmt(r.totals.leads)}</strong> leads · <strong>{r.totals.qualifiedRate}%</strong> qualified · <strong>{fmt(r.totals.won)}</strong> won · <strong>{r.totals.revenue ? cur + fmt(r.totals.revenue) : '—'}</strong> revenue{r.valuePerLead ? <> · <strong>{cur}{fmt(r.valuePerLead)}</strong> per lead</> : null}</div>
+            </div>
+            {r.insights.map((x: string, i: number) => <div key={i} style={{ fontSize: 13, color: T.warn, padding: '2px 0' }}>• {x}</div>)}
+          </div>
+          <div style={cardStyle}><h3 style={{ marginTop: 0 }}>By landing page</h3>{table(r.byPage, 'Page')}</div>
+          <div style={cardStyle}><h3 style={{ marginTop: 0 }}>By source</h3>{table(r.bySource, 'Source / medium')}</div>
+        </>
+      ) : data && <div style={cardStyle}><p style={{ margin: 0, color: T.muted }}>No CRM leads received yet for this period.</p></div>}
+      <div style={cardStyle}>
+        <h3 style={{ marginTop: 0 }}>Connect the CRM</h3>
+        <p style={{ fontSize: 13, color: T.muted, marginTop: -6 }}>Send each lead (and every later status change) to Fischer from the CRM, Zapier/Make, or a webhook. Fischer stores only the CRM lead ID, status, value and source — never names, emails or phone numbers. Install the tracking kit with <code>injectHiddenFields: true</code> so forms pass the landing page and UTMs into the CRM.</p>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <Button onClick={async () => { if (!data?.keyConfigured || confirm('Create a new key? The old key stops working immediately.')) { const k = await api(`/api/clients/${client.id}/lead-key`, { method: 'POST' }); setKey(k.key); setData({ ...data, keyConfigured: true }) } }}>{data?.keyConfigured ? 'Rotate ingest key' : 'Create ingest key'}</Button>
+          {data?.keyConfigured && !key && <span style={{ fontSize: 13, color: T.good }}>Key configured</span>}
+        </div>
+        {key && <div style={{ background: T.panel2, padding: 12, borderRadius: 8, marginBottom: 10, wordBreak: 'break-all' }}><strong style={{ color: T.warn }}>Copy this key now — it won&apos;t be shown again:</strong><div style={{ fontFamily: 'monospace', marginTop: 6 }}>{key}</div></div>}
+        <pre style={{ background: T.panel2, padding: 12, borderRadius: 8, fontSize: 12, overflowX: 'auto' }}>{example}</pre>
+        <p style={{ fontSize: 12, color: T.muted }}>Statuses: new, contacted, qualified, unqualified, won, lost (common CRM names like "Closed Won", "SQL", "Disqualified" are mapped automatically). Up to 500 leads per request; send the same externalId again to update a lead.</p>
+      </div>
     </>
   )
 }

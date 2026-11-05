@@ -9,6 +9,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     client: {
       ...data,
       clarity_api_token: data.clarity_api_token ? '••••configured' : null,
+      lead_ingest_key_hash: undefined,
+      lead_ingest_configured: !!data.lead_ingest_key_hash,
       integrations: { ga4: !!data.ga4_property_id, clarity: !!data.clarity_api_token }
     }
   })

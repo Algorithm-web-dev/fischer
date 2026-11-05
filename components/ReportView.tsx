@@ -198,6 +198,23 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
           </Section>
         )}
 
+        {r.leadQuality && (
+          <Section title="Lead quality" kicker="From your CRM">
+            <div className="rv-grid" style={{ marginBottom: 14 }}>
+              <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>LEADS</div><div style={{ fontSize: 24, fontWeight: 700 }}>{fmtNum(r.leadQuality.totals.leads)}</div></div>
+              <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>QUALIFIED</div><div style={{ fontSize: 24, fontWeight: 700 }}>{r.leadQuality.totals.qualifiedRate}%</div></div>
+              <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>WON</div><div style={{ fontSize: 24, fontWeight: 700 }}>{fmtNum(r.leadQuality.totals.won)}</div></div>
+              {r.leadQuality.totals.revenue > 0 && <div><div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>REVENUE WON</div><div style={{ fontSize: 24, fontWeight: 700 }}>{fmtMoney(r.leadQuality.totals.revenue, cur)}</div></div>}
+            </div>
+            <div className="rv-scroll"><table className="rv-table">
+              <thead><tr><th>Source</th><th>Leads</th><th>Qualified</th><th>Won</th>{r.leadQuality.totals.revenue > 0 && <th>Revenue / lead</th>}</tr></thead>
+              <tbody>{r.leadQuality.bySource.slice(0, 6).map(s => (
+                <tr key={s.key}><td>{s.key}</td><td>{fmtNum(s.leads)}</td><td>{s.qualifiedRate}%</td><td>{fmtNum(s.won)}</td>{r.leadQuality!.totals.revenue > 0 && <td>{fmtMoney(s.revenuePerLead, cur)}</td>}</tr>))}
+              </tbody></table></div>
+            {r.leadQuality.insights.length > 0 && <ul style={{ fontSize: 14, paddingLeft: 18 }}>{r.leadQuality.insights.slice(0, 4).map((x, i) => <li key={i}>{x}</li>)}</ul>}
+          </Section>
+        )}
+
         <Section title="Changes made and their impact" kicker="What we did">
           {r.changes.length === 0 ? <p style={{ color: C.muted }}>No changes were logged this month.</p> : (
             <div className="rv-scroll"><table className="rv-table">

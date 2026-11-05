@@ -7,6 +7,7 @@ import { monthRange } from './ga4-audit'
 import { measureChangeImpact, periodToDate, shiftPeriod, type ChangeImpact } from './snapshots'
 import { pctChange, type TestResultStats } from './stats'
 import type { LeakAnalysis } from './leaks'
+import { computeLeadQuality, type LeadQualityReport } from './lead-quality'
 
 export interface KpiValue { current: number | null; previous: number | null; changePct: number | null }
 
@@ -66,6 +67,7 @@ export interface MonthlyReport {
     paid: LeakAnalysis['paidTraffic']
     funnel: LeakAnalysis['funnel']
   } | null
+  leadQuality: LeadQualityReport | null
 }
 
 const monthLabel = (period: string) =>
@@ -205,6 +207,10 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     funnel: la.funnel?.measured ? la.funnel : null
   } : null
 
+  const { data: leadRows } = await supabase.from('leads').select('status, value, landing_page, utm_source, utm_medium, channel, created_at')
+    .eq('client_id', clientId).gte('created_at', `${range.startDate}T00:00:00Z`).lte('created_at', `${range.endDate}T23:59:59Z`).limit(20000)
+  const leadQuality = leadRows?.length ? computeLeadQuality(leadRows as any, { from: range.startDate, to: range.endDate }) : null
+
   const latestOverall = (audits ?? [])[0]?.output as AuditResult | undefined
   const nextMonth = [
     ...(tests ?? []).filter(tb => tb.status === 'approved' || tb.status === 'draft').slice(0, 3).map(tb => `A/B test: ${tb.hypothesis_name}`),
@@ -251,6 +257,7 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     tests: testRows,
     nextMonth,
     dataNotes,
-    leaks
+    leaks,
+    leadQuality
   }
 }

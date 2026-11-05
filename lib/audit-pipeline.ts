@@ -11,6 +11,7 @@ import { leakForUrl, type LeakAnalysis } from './leaks'
 import { buildTrackingReport } from './tracking'
 import { formatFunnelForPrompt } from './funnels'
 import { raiseAlert, resolveAlerts } from './alerts'
+import { leadQualityReport, normalisePath } from './lead-quality'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -97,9 +98,10 @@ export async function runAuditPipeline(params: {
     ? await loadChangesSince(supabase, client.id, input.pageUrl, previous.completed_at)
     : []
 
-  const [leak, tracking] = await Promise.all([
+  const [leak, tracking, leadSection] = await Promise.all([
     client ? loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : Promise.resolve(null),
-    buildTrackingReport({ capture, pageUrl: input.pageUrl, businessGoal: input.businessGoal, client }).catch(() => null)
+    buildTrackingReport({ capture, pageUrl: input.pageUrl, businessGoal: input.businessGoal, client }).catch(() => null),
+    client ? leadSectionFor(supabase, client.id, input.pageUrl).catch(() => '') : Promise.resolve('')
   ])
 
   const result = await runFischerAudit({
@@ -115,7 +117,7 @@ export async function runAuditPipeline(params: {
     changesSincePrevious,
     leak: leak && 'page' in leak && leak.page ? leak as any : null,
     tracking,
-    extraSections: [leak?.funnelSection ?? '']
+    extraSections: [leak?.funnelSection ?? '', leadSection]
   }, model)
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
@@ -228,6 +230,16 @@ function stripManual(input: AuditInput): AuditInput {
 export function stripDataPrefix(base64: string): string {
   const i = base64.indexOf(',')
   return base64.startsWith('data:') && i !== -1 ? base64.slice(i + 1) : base64
+}
+
+async function leadSectionFor(supabase: SupabaseClient, clientId: string, pageUrl: string): Promise<string> {
+  const q = await leadQualityReport(supabase, clientId, 90)
+  if (!q) return ''
+  const page = q.byPage.find(p => p.key === normalisePath(pageUrl))
+  const t = q.totals
+  return `**LEAD QUALITY FROM THE CRM (last 90 days):** site-wide ${t.leads} leads, ${t.qualifiedRate}% qualified, ${t.winRate}% won.${page
+    ? ` Leads that landed on THIS page: ${page.leads}, ${page.qualifiedRate}% qualified, ${page.winRate}% won, revenue per lead ${page.revenuePerLead}.${page.leads >= 10 && page.qualifiedRate < t.qualifiedRate * 0.7 ? ' This page attracts lower-quality leads than average — consider whether the copy/offer sets the wrong expectations or the form screens too little.' : ''}`
+    : ' No CRM leads are attributed to this page.'}`
 }
 
 async function loadLeak(supabase: SupabaseClient, clientId: string, pageUrl: string, currency: string) {
