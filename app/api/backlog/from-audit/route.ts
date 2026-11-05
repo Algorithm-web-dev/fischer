@@ -31,7 +31,15 @@ export async function POST(req: NextRequest) {
 
   const result = audit.output as AuditResult
 
-  const rows = result.frictionPoints.map(fp => ({
+  // Skip findings already on the backlog (same title, not yet shipped) so a
+  // monthly re-audit doesn't duplicate everything.
+  const { data: existing } = await supabase.from('backlog_items').select('title')
+    .eq('client_id', clientId).neq('tier', 'shipped')
+  const open = new Set((existing ?? []).map(e => e.title.trim().toLowerCase()))
+  const fresh = result.frictionPoints.filter(fp => !open.has(fp.title.trim().toLowerCase()))
+  if (fresh.length === 0) return NextResponse.json({ created: 0, skipped: result.frictionPoints.length, items: [] })
+
+  const rows = fresh.map(fp => ({
     client_id: clientId,
     source_audit_id: auditId,
     title: fp.title,
@@ -47,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ created: data.length, items: data })
+  return NextResponse.json({ created: data.length, skipped: result.frictionPoints.length - fresh.length, items: data })
 }
 
 /** Clarity = qualitative (behaviour), GA4/PageSpeed = quantitative. */

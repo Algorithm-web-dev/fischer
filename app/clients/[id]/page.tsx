@@ -3,8 +3,11 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
 import { ClientForm, toFormValues } from '@/components/ClientForm'
+import { Backlog } from '@/components/tabs/Backlog'
+import { Guardrails } from '@/components/tabs/Guardrails'
+import { Competitors } from '@/components/tabs/Competitors'
 
-type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'changes' | 'tests' | 'reports' | 'settings'
+type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'backlog' | 'changes' | 'tests' | 'guardrails' | 'competitors' | 'reports' | 'settings'
 
 const lastMonth = () => {
   const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1)
@@ -39,7 +42,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
   }, [params.id])
   useEffect(() => { load() }, [load])
 
-  const tabs: [Tab, string][] = [['overview', 'Overview'], ['leaks', 'Revenue leaks'], ['leads', 'Lead quality'], ['pages', 'Pages & audits'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['reports', 'Reports'], ['settings', 'Settings']]
+  const tabs: [Tab, string][] = [['overview', 'Overview'], ['leaks', 'Revenue leaks'], ['leads', 'Lead quality'], ['pages', 'Pages & audits'], ['backlog', 'Backlog'], ['changes', 'Changes'], ['tests', 'A/B tests'], ['guardrails', 'Guardrails'], ['competitors', 'Competitors'], ['reports', 'Reports'], ['settings', 'Settings']]
 
   return (
     <Page title={client?.name ?? 'Client'} actions={client && <div style={{ display: 'flex', gap: 6 }}>
@@ -69,6 +72,9 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
           {tab === 'overview' && <Overview trends={trends} />}
           {tab === 'leaks' && <Leaks client={client} onTracked={() => setTab('pages')} />}
           {tab === 'leads' && <Leads client={client} />}
+          {tab === 'backlog' && <Backlog client={client} />}
+          {tab === 'guardrails' && <Guardrails client={client} />}
+          {tab === 'competitors' && <Competitors client={client} />}
           {tab === 'pages' && <Pages client={client} trends={trends} reload={load} />}
           {tab === 'changes' && <Changes clientId={client.id} />}
           {tab === 'tests' && <Tests clientId={client.id} />}

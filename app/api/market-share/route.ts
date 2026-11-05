@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { runCompetitorAudit, estimateTraffic, synthesizeMarketShare } from '@/lib/marketshare'
+import { isValidHttpUrl } from '@/lib/validate'
 
 export const maxDuration = 300
 
@@ -44,16 +45,23 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // --- Run every competitor audit + traffic estimate concurrently ---
-    const competitorResults = await Promise.all(
-      body.competitors.map(async (comp) => {
-        const [audit, traffic] = await Promise.all([
-          runCompetitorAudit(comp.url),
-          estimateTraffic(comp.url)
-        ])
-        return { ...comp, audit, traffic }
-      })
-    )
+    if (body.competitors.length > 5) {
+      return NextResponse.json({ error: 'Up to 5 competitors per analysis.' }, { status: 400 })
+    }
+    for (const c of body.competitors) {
+      if (!isValidHttpUrl(c.url)) return NextResponse.json({ error: `Invalid competitor URL: ${c.url}` }, { status: 400 })
+    }
+    // --- One competitor at a time: each capture launches a browser, and several
+    // at once exhausts a serverless function's memory. Traffic estimates
+    // (no browser) run alongside each capture. ---
+    const competitorResults = []
+    for (const comp of body.competitors) {
+      const [audit, traffic] = await Promise.all([
+        runCompetitorAudit(comp.url),
+        estimateTraffic(comp.url).catch(() => ({ monthlyVisits: 'Unknown', source: 'web_search' as const, confidence: 'low' as const }))
+      ])
+      competitorResults.push({ ...comp, audit, traffic })
+    }
 
     // --- Persist each competitor audit ---
     const competitorAuditRows = await Promise.all(
