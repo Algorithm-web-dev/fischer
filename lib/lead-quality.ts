@@ -5,8 +5,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * Lead quality — connects CRM outcomes to pages and traffic sources, so
  * Fischer optimises for qualified leads and revenue, not raw form fills.
  *
- * Leads arrive via POST /api/leads/ingest (client CRM, Zapier/Make, or the
- * algorithm-crm app), keyed by the CRM's own lead id so later status updates
+ * Leads arrive via POST /api/leads/ingest (the client's own CRM — HubSpot,
+ * Salesforce, Zoho, Pipedrive… — directly or through Zapier/Make), keyed by
+ * the CRM's own lead id so later status updates
  * (qualified → won with a value) update the same row. The Fischer tracking
  * kit's hidden fields (fischer_landing_page, fischer_utm_*) give the CRM the
  * source data to send back.
