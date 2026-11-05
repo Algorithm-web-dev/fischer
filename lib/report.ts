@@ -64,6 +64,7 @@ export interface MonthlyReport {
     byDevice: { device: string; share: number }[]
     mobileGap: LeakAnalysis['mobileGap']
     paid: LeakAnalysis['paidTraffic']
+    funnel: LeakAnalysis['funnel']
   } | null
 }
 
@@ -200,7 +201,8 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     topPages: la.pages.slice(0, 5).map(p => ({ page: p.page, conversionRate: p.conversionRate, share: p.share, worstDevice: p.worstDevice, recoverableMonthly: Math.round(p.recoverableValue * scale) })),
     byDevice: la.byDevice.map(d => ({ device: d.device, share: d.share })),
     mobileGap: la.mobileGap ? { ...la.mobileGap, value: Math.round(la.mobileGap.value * scale) } : null,
-    paid: la.paidTraffic.slice(0, 3).map(p => ({ ...p, value: Math.round(p.value * scale) }))
+    paid: la.paidTraffic.slice(0, 3).map(p => ({ ...p, value: Math.round(p.value * scale) })),
+    funnel: la.funnel?.measured ? la.funnel : null
   } : null
 
   const latestOverall = (audits ?? [])[0]?.output as AuditResult | undefined

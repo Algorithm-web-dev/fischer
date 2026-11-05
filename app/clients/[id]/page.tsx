@@ -180,6 +180,7 @@ function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
               </div>))}
             {!client.primary_url && <p style={{ fontSize: 12, color: T.warn }}>Set the client&apos;s website in Settings so pages can be tracked with one click.</p>}
           </div>
+          {a.funnel && <FunnelCard f={a.funnel} money={a.valuePerConversion ? money : null} />}
           {a.mobileGap && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Mobile gap</h3><p style={{ margin: 0 }}>Mobile converts at <strong>{a.mobileGap.mobileRate}%</strong> vs <strong>{a.mobileGap.desktopRate}%</strong> on desktop. Reaching {a.mobileGap.targetRate}% (70% of desktop) on {fmt(a.mobileGap.mobileSessions)} mobile sessions = {fmt(a.mobileGap.lostConversions, 1)} more conversions{a.valuePerConversion ? `, ≈${money(a.mobileGap.value * scale)}/month at half the gap` : ''}.</p></div>}
           {a.paidTraffic.length > 0 && <div style={cardStyle}><h3 style={{ marginTop: 0 }}>Paid traffic on under-performing pages</h3>
             {a.paidTraffic.map((p: any, i: number) => <div key={i} style={{ fontSize: 14, padding: '4px 0' }}>{p.channel} → <strong>{p.page}</strong>: {p.conversionRate}% vs site {p.siteRate}% on {fmt(p.sessions)} sessions{a.valuePerConversion ? ` · ≈${money(p.value * scale)}/mo` : ''}</div>)}
@@ -187,6 +188,53 @@ function Leaks({ client, onTracked }: { client: any; onTracked: () => void }) {
         </>
       )}
     </>
+  )
+}
+
+function FunnelCard({ f, money }: { f: any; money: ((n: number) => string) | null }) {
+  const max = Math.max(1, ...f.steps.map((s: any) => s.users))
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ marginTop: 0 }}>{f.kind === 'ecommerce' ? 'Checkout funnel' : 'Lead funnel'} <span style={{ fontSize: 12, color: T.muted, fontWeight: 400 }}>users reaching each step</span></h3>
+      {!f.measured && <p style={{ color: T.warn, fontSize: 13 }}>Missing events: {f.missingEvents.join(', ')}. {f.kind === 'lead' ? 'Install the tracking kit (Settings) to measure the form funnel.' : 'Implement GA4 e-commerce events.'}</p>}
+      {f.steps.map((s: any) => (
+        <div key={s.event} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '6px 0', fontSize: 13 }}>
+          <div style={{ width: 150 }}>{s.label}</div>
+          <div style={{ flex: 1, background: T.panel2, borderRadius: 4 }}><div style={{ width: `${(s.users / max) * 100}%`, minWidth: 2, height: 18, background: T.gold, borderRadius: 4 }} /></div>
+          <div style={{ width: 170, textAlign: 'right' }}>{fmt(s.users)}{s.rateFromPrevious != null && <span style={{ color: T.muted }}> · {s.rateFromPrevious}% continue</span>}</div>
+        </div>))}
+      {f.worstStep && <p style={{ fontSize: 14 }}><strong>Biggest drop:</strong> {f.worstStep.from} → {f.worstStep.to} — only {f.worstStep.rate}% continue ({fmt(f.worstStep.dropOff)} users lost).{f.sensitivity && <> A 10% improvement here ≈ {fmt(f.sensitivity.extraConversions, 1)} more conversions{money ? ` (${money(f.sensitivity.extraValue)})` : ''} per period.</>}</p>}
+      {f.deviceGaps.map((g: any) => <div key={g.step} style={{ fontSize: 13, color: T.warn }}>Mobile lags at {g.step}: {g.mobileRate}% vs {g.desktopRate}% on desktop</div>)}
+      {f.formAbandonFields?.length > 0 && <p style={{ fontSize: 13 }}><strong>Fields where people give up:</strong> {f.formAbandonFields.slice(0, 6).map((x: any) => `${x.field} (${x.abandons})`).join(', ')}</p>}
+      {f.kind === 'lead' && <p style={{ fontSize: 13, color: T.muted }}>Contact clicks: {f.contactActions.map((c: any) => `${c.event.replace('_', ' ')} ${fmt(c.users)}`).join(' · ')}</p>}
+      {f.notes.map((n: string, i: number) => <div key={i} style={{ fontSize: 12, color: T.warn }}>{n}</div>)}
+    </div>
+  )
+}
+
+function TrackingKit({ client }: { client: any }) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const snippet = `<script>
+  window.fischerConfig = {
+    leadEvent: '${client.ga4_conversion_event || 'generate_lead'}',
+    thankYouPath: '/thank-you',        // or successSelector: '.form-success'
+    injectHiddenFields: true           // sends landing page + UTMs to your CRM with each lead
+  };
+</script>
+<script src="${origin}/fischer-tracking.js" async></script>`
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ marginTop: 0 }}>Tracking kit</h3>
+      <p style={{ fontSize: 13, color: T.muted, marginTop: -6 }}>Add once to every page (Google Tag Manager → Custom HTML tag → All Pages, or the site template). It sends <code>form_start</code>, <code>form_submit</code>, <code>form_abandon</code> (with the field people stopped at), the confirmed lead event, <code>click_to_call</code>, <code>whatsapp_click</code> and <code>email_click</code>. No form values are ever read.</p>
+      <pre style={{ background: T.panel2, padding: 12, borderRadius: 8, fontSize: 12, overflowX: 'auto', whiteSpace: 'pre' }}>{snippet}</pre>
+      <Button kind="ghost" onClick={() => navigator.clipboard.writeText(snippet)}>Copy snippet</Button>
+      <ol style={{ fontSize: 13, color: T.muted, lineHeight: 1.7 }}>
+        <li>Set <code>thankYouPath</code> (or <code>successSelector</code>) so only real, successful submissions count as leads.</li>
+        <li>With GTM: add a GA4 Event tag with event name <code>{'{{Event}}'}</code> on a Custom Event trigger matching <code>form_start|form_submit|form_abandon|{client.ga4_conversion_event || 'generate_lead'}|click_to_call|whatsapp_click|email_click</code>.</li>
+        <li>In GA4 Admin → Events, mark the lead event (and calls/WhatsApp if they count as leads) as <strong>key events</strong>.</li>
+        <li>In GA4 Admin → Custom definitions, register <code>field_name</code> (event scope) to see which form fields people abandon on.</li>
+      </ol>
+    </div>
   )
 }
 
@@ -460,6 +508,7 @@ function Settings({ client, reload }: { client: any; reload: () => void }) {
           </div>
         ))}
       </div>
+      <TrackingKit client={client} />
       <div style={cardStyle}>
         <ClientForm initial={toFormValues(client)} submitLabel="Save changes" onSubmit={async v => { await api('/api/clients', { method: 'PATCH', json: { id: client.id, ...v } }); reload() }} />
       </div>

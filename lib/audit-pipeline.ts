@@ -9,6 +9,7 @@ import { runFischerAudit, FISCHER_MODEL, type AuditInput, type AuditResult, type
 import { fingerprintPage, diffFingerprints, type PageFingerprint, type PageDiff } from './page-diff'
 import { leakForUrl, type LeakAnalysis } from './leaks'
 import { buildTrackingReport } from './tracking'
+import { formatFunnelForPrompt } from './funnels'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -107,8 +108,9 @@ export async function runAuditPipeline(params: {
     valuePerConversion: client?.avg_order_value,
     previous: previous ? toPreviousContext(previous) : null,
     changesSincePrevious,
-    leak,
-    tracking
+    leak: leak && 'page' in leak && leak.page ? leak as any : null,
+    tracking,
+    extraSections: [leak?.funnelSection ?? '']
   })
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
@@ -216,9 +218,11 @@ async function loadLeak(supabase: SupabaseClient, clientId: string, pageUrl: str
   const { data } = await supabase.from('leak_analyses').select('data')
     .eq('client_id', clientId).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
   const analysis = data?.[0]?.data as LeakAnalysis | undefined
+  if (!analysis) return null
+  const funnelSection = analysis.funnel ? formatFunnelForPrompt(analysis.funnel) : null
   const page = leakForUrl(analysis, pageUrl)
-  if (!analysis || !page) return null
-  return { page, siteRate: analysis.site.conversionRate, currency, periodDays: analysis.periodDays }
+  if (!page) return funnelSection ? { funnelSection } : null
+  return { funnelSection, page, siteRate: analysis.site.conversionRate, currency, periodDays: analysis.periodDays }
 }
 
 async function loadClarity(supabase: SupabaseClient, client: ClientRow | null, pageUrl: string): Promise<ClarityResult | null> {

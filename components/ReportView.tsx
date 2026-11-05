@@ -169,6 +169,21 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
                   {r.leaks!.hasValue && <td>{fmtMoney(p.recoverableMonthly, cur)}</td>}
                 </tr>))}
               </tbody></table></div>
+            {r.leaks.funnel && (
+              <div style={{ margin: '16px 0', breakInside: 'avoid' }}>
+                <div style={{ fontSize: 12, color: C.muted, fontWeight: 600, marginBottom: 6 }}>{r.leaks.funnel.kind === 'ecommerce' ? 'CHECKOUT FUNNEL' : 'LEAD FUNNEL'} — users reaching each step</div>
+                {r.leaks.funnel.steps.map(s => {
+                  const max = Math.max(1, ...r.leaks!.funnel!.steps.map(x => x.users))
+                  return (
+                    <div key={s.event} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0', fontSize: 13 }}>
+                      <div style={{ width: 140 }}>{s.label}</div>
+                      <div style={{ flex: 1, background: C.bg, borderRadius: 3 }}><div style={{ width: `${(s.users / max) * 100}%`, minWidth: 2, height: 14, background: C.navy, borderRadius: 3 }} /></div>
+                      <div style={{ width: 150, textAlign: 'right' }}>{fmtNum(s.users)}{s.rateFromPrevious != null && <span style={{ color: C.muted }}> · {s.rateFromPrevious}%</span>}</div>
+                    </div>)
+                })}
+                {r.leaks.funnel.worstStep && <p style={{ fontSize: 14, margin: '8px 0 0' }}><strong>Biggest drop-off:</strong> {r.leaks.funnel.worstStep.from} → {r.leaks.funnel.worstStep.to}, where only {r.leaks.funnel.worstStep.rate}% continue.</p>}
+              </div>
+            )}
             {r.leaks.mobileGap && (
               <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8 }}>
                 <strong>Mobile gap:</strong> mobile converts at {r.leaks.mobileGap.mobileRate.toFixed(2)}% vs {r.leaks.mobileGap.desktopRate.toFixed(2)}% on desktop.

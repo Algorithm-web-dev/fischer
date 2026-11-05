@@ -1,4 +1,5 @@
 import { getGA4Client, type DateRange } from './ga4-audit'
+import type { FunnelAnalysis } from './funnels'
 
 /**
  * Revenue leak map.
@@ -71,6 +72,7 @@ export interface LeakAnalysis {
   paidTraffic: { page: string; url: string | null; channel: string; sessions: number; conversionRate: number; siteRate: number; lostConversions: number; value: number }[]
   notes: string[]
   generatedAt: string
+  funnel?: FunnelAnalysis | null
 }
 
 const round = (n: number, dp = 0) => Math.round(n * 10 ** dp) / 10 ** dp

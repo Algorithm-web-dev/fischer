@@ -3,6 +3,7 @@ import { fetchLeakAnalysis, type LeakAnalysis } from './leaks'
 import { lastNDays, type DateRange } from './ga4-audit'
 import type { ClientRow } from './audit-pipeline'
 import { benchmarkTargets } from './benchmarks'
+import { fetchFunnel } from './funnels'
 
 export interface StoredLeakAnalysis { id: string; created_at: string; data: LeakAnalysis }
 
@@ -29,6 +30,12 @@ export async function runLeakAnalysis(
     targetOverrides: targets?.overrides
   })
   if (targets?.note) data.notes.push(targets.note)
+  // E-commerce if GA4 records revenue; otherwise treat as lead generation.
+  const kind = data.valueBasis === 'ga4_revenue' ? 'ecommerce' : 'lead'
+  data.funnel = await fetchFunnel({
+    propertyId: client.ga4_property_id, range, kind,
+    valuePerConversion: data.valuePerConversion, conversionEvent: client.ga4_conversion_event
+  }).catch(err => { data.notes.push(`Funnel not available: ${err instanceof Error ? err.message : String(err)}`); return null })
   const { data: row, error } = await supabase.from('leak_analyses').insert({
     client_id: client.id, start_date: range.startDate, end_date: range.endDate,
     data, recoverable_monthly: data.totals.recoverableMonthly, created_by: userId ?? null
