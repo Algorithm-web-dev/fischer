@@ -5,6 +5,7 @@ import { detectImageType } from '@/lib/capture'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { auditRateLimit, checkRateLimit } from '@/lib/ratelimit'
 import { isValidHttpUrl } from '@/lib/validate'
+import { enqueueAudit } from '@/lib/queue'
 
 // Full-page capture at two viewports + PageSpeed + model call. Needs a Vercel
 // plan that allows functions longer than 60s (Pro: up to 300s; 800s with Fluid compute).
@@ -12,6 +13,8 @@ export const maxDuration = 300
 
 interface AuditRequestBody extends AuditInput {
   auditId?: string
+  /** true → queue the audit and return immediately; poll GET /api/audits/[id] for the result */
+  async?: boolean
 }
 
 export async function POST(req: NextRequest) {
@@ -54,6 +57,14 @@ export async function POST(req: NextRequest) {
     if (!allowed) {
       return NextResponse.json({ error: `Rate limit reached. Try again after ${new Date(resetAt).toLocaleTimeString()}.` }, { status: 429 })
     }
+    // Queue mode (recommended): returns at once, a worker runs it within ~1 minute.
+    // Manual screenshots/HTML (resubmissions) always run inline.
+    if (input.async && !input.manualHtml && !input.manualScreenshotDesktop && !input.manualScreenshotMobile) {
+      const { async: _a, auditId: _id, ...jobInput } = input
+      const id = await enqueueAudit(supabase, { input: jobInput, client, trigger: 'manual', createdBy: user.id })
+      return NextResponse.json({ auditId: id, status: 'queued' }, { status: 202 })
+    }
+
     const { data: row, error } = await supabase.from('audits').insert({
       client_id: client?.id ?? null,
       client_name: input.clientName,

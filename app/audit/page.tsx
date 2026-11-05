@@ -30,6 +30,7 @@ function RunAudit({ onDone }: { onDone: (id: string) => void }) {
   const [manualMobile, setManualMobile] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
+  const [progress, setProgress] = useState('')
 
   useEffect(() => { api('/api/clients').then(d => setClients(d.clients)).catch(() => {}) }, [])
   const client = clients.find(c => c.id === form.clientId)
@@ -38,7 +39,7 @@ function RunAudit({ onDone }: { onDone: (id: string) => void }) {
   async function run() {
     setRunning(true); setError('')
     try {
-      const body: any = { ...form, clientId: form.clientId || undefined }
+      const body: any = { ...form, clientId: form.clientId || undefined, async: !manual }
       if (manual) {
         body.auditId = manual.auditId
         if (manualHtml) body.manualHtml = manualHtml
@@ -47,6 +48,21 @@ function RunAudit({ onDone }: { onDone: (id: string) => void }) {
       }
       const r = await api('/api/audit', { method: 'POST', json: body })
       if (r.status === 'needs_manual_input') setManual(r)
+      else if (r.status === 'queued') {
+        // Poll the queued job
+        for (;;) {
+          await new Promise(res => setTimeout(res, 5000))
+          const { audit } = await api(`/api/audits/${r.auditId}`)
+          setProgress(audit.status === 'queued' ? 'Queued — a worker picks it up within a minute…' : audit.status === 'running' ? 'Running: capturing the page and analysing…' : '')
+          if (audit.status === 'complete') { onDone(r.auditId); break }
+          if (audit.status === 'needs_manual_input') {
+            const c = audit.capture_metadata?.confidence
+            setManual({ auditId: r.auditId, needsManualHtml: !c?.htmlOk, needsManualDesktop: !c?.desktopOk, needsManualMobile: !c?.mobileOk, reasons: c?.reasons ?? {} })
+            break
+          }
+          if (audit.status === 'failed') { setError(audit.error_message || 'Audit failed.'); break }
+        }
+      }
       else onDone(r.auditId)
     } catch (e) { setError(e instanceof Error ? e.message : 'Audit failed') }
     finally { setRunning(false) }
@@ -91,7 +107,7 @@ function RunAudit({ onDone }: { onDone: (id: string) => void }) {
         )}
         {error && <div style={{ color: T.bad, marginBottom: 10 }}>{error}</div>}
         <Button onClick={run} disabled={!ready || running}>{running ? 'Auditing… (1–4 min)' : manual ? 'Resume audit' : 'Run Fischer audit'}</Button>
-        {running && <p style={{ fontSize: 12, color: T.muted }}>Loading the page in a real browser, capturing it top to bottom on desktop and mobile, pulling PageSpeed/GA4/Clarity, then analysing.</p>}
+        {running && <p style={{ fontSize: 12, color: T.muted }}>{progress || 'Loading the page in a real browser, capturing it top to bottom on desktop and mobile, pulling PageSpeed/GA4/Clarity, then analysing.'} You can leave this page — the audit keeps running and appears on the client dashboard.</p>}
       </div>
     </Page>
   )
@@ -111,7 +127,11 @@ function AuditView({ id }: { id: string }) {
   if (error) return <Page title="Audit"><p style={{ color: T.bad }}>{error}</p></Page>
   if (!audit) return <Page title="Audit"><p style={{ color: T.muted }}>Loading…</p></Page>
   if (audit.status !== 'complete') {
-    return <Page title="Audit"><div style={cardStyle}><Pill color={T.warn}>{audit.status}</Pill><p>{audit.error_message || 'This audit has not completed.'}</p><Link href="/audit" style={{ color: T.gold }}>Run a new audit</Link></div></Page>
+    const pending = audit.status === 'queued' || audit.status === 'running'
+    return <Page title="Audit"><div style={cardStyle}><Pill color={T.warn}>{audit.status.replace(/_/g, ' ')}</Pill>
+      <p>{pending ? 'This audit is in progress — this page refreshes automatically.' : audit.error_message || 'This audit has not completed.'}</p>
+      {pending && <AutoRefresh />}
+      <Link href="/audit" style={{ color: T.gold }}>Run a new audit</Link></div></Page>
   }
 
   const r = audit.output as AuditResult
@@ -275,6 +295,11 @@ function AuditView({ id }: { id: string }) {
       </div>
     </Page>
   )
+}
+
+function AutoRefresh() {
+  useEffect(() => { const t = setTimeout(() => window.location.reload(), 10000); return () => clearTimeout(t) }, [])
+  return null
 }
 
 function Finding({ f, dim }: { f: FrictionPoint; dim?: boolean }) {

@@ -5,7 +5,7 @@ import { assessConfidence, isFullyConfident, type ConfidenceCheck } from './conf
 import { fetchPageSpeedBoth } from './pagespeed'
 import { fetchGA4AuditData, lastNDays, type GA4AuditData } from './ga4-audit'
 import { aggregateStoredDays, fetchClarityData, type ClarityDaily, type ClarityResult } from './clarity'
-import { runFischerAudit, FISCHER_MODEL, type AuditInput, type AuditResult, type PreviousAuditContext, type ChangeLogEntry } from './claude'
+import { runFischerAudit, FISCHER_MODEL, FISCHER_SCHEDULED_MODEL, type AuditInput, type AuditResult, type PreviousAuditContext, type ChangeLogEntry } from './claude'
 import { fingerprintPage, diffFingerprints, type PageFingerprint, type PageDiff } from './page-diff'
 import { leakForUrl, type LeakAnalysis } from './leaks'
 import { buildTrackingReport } from './tracking'
@@ -51,8 +51,10 @@ export async function runAuditPipeline(params: {
   input: AuditInput
   client: ClientRow | null
   trackedPageId?: string | null
+  trigger?: 'manual' | 'scheduled'
 }): Promise<PipelineOutcome> {
   const { supabase, auditId, input, client } = params
+  const model = params.trigger === 'scheduled' ? FISCHER_SCHEDULED_MODEL : FISCHER_MODEL
 
   const autoViewports: ViewportName[] = []
   if (!input.manualScreenshotDesktop) autoViewports.push('desktop')
@@ -82,6 +84,8 @@ export async function runAuditPipeline(params: {
       status: 'needs_manual_input',
       scraped_content: capture.content ?? { error: capture.contentError },
       error_message: Object.values(confidence.reasons).filter(Boolean).join(' · '),
+      capture_metadata: { confidence },
+      locked_at: null,
       input_data: stripManual(input)
     }).eq('id', auditId)
     return { status: 'needs_manual_input', auditId, confidence }
@@ -112,7 +116,7 @@ export async function runAuditPipeline(params: {
     leak: leak && 'page' in leak && leak.page ? leak as any : null,
     tracking,
     extraSections: [leak?.funnelSection ?? '']
-  })
+  }, model)
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
 
@@ -149,8 +153,9 @@ export async function runAuditPipeline(params: {
     tracking,
     page_diff: pageDiff,
     previous_audit_id: previous?.id ?? null,
-    model: FISCHER_MODEL,
+    model,
     error_message: null,
+    locked_at: null,
     input_data: stripManual(input)
   }).eq('id', auditId)
   if (updateError) throw new Error(`Saving audit failed: ${updateError.message}`)

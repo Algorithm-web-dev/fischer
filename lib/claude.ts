@@ -12,7 +12,7 @@ import { formatTrackingForPrompt } from './tracking'
 import { computeRevenueImpact, planTest, type RevenueImpact, type TestPlan } from './stats'
 import type { PageLeak } from './leaks'
 
-export { anthropic, FISCHER_MODEL } from './llm'
+export { anthropic, FISCHER_MODEL, FISCHER_SCHEDULED_MODEL } from './llm'
 
 // ============================================================
 // What the model returns (validated against this schema)
@@ -460,8 +460,9 @@ export function finaliseAudit(output: AuditOutput, ctx: AuditContext): AuditResu
   }
 }
 
-export async function runFischerAudit(ctx: AuditContext): Promise<AuditResult> {
+export async function runFischerAudit(ctx: AuditContext, model?: string): Promise<AuditResult> {
   const output = await structuredCall({
+    model,
     schema: AuditOutputSchema,
     system: FISCHER_SYSTEM_PROMPT,
     content: buildContentBlocks(ctx),

@@ -18,9 +18,11 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
 })
 
-// Override per-deployment with FISCHER_MODEL if you want a cheaper tier
-// (e.g. claude-sonnet-5-5) for high-volume scheduled re-audits.
+// Model for audits a person runs (baselines, ad-hoc) and other analysis calls.
 export const FISCHER_MODEL = process.env.FISCHER_MODEL || 'claude-opus-5-5'
+// Routine monthly re-audits run on the cheaper Sonnet tier by default (roughly
+// half the cost of Opus); baselines and manual audits use FISCHER_MODEL.
+export const FISCHER_SCHEDULED_MODEL = process.env.FISCHER_SCHEDULED_MODEL || 'claude-sonnet-5-5'
 
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 
@@ -32,6 +34,7 @@ export interface StructuredCallOptions<S extends z.ZodType> {
   content: Anthropic.Beta.BetaContentBlockParam[] | string
   maxTokens?: number
   effort?: Effort
+  model?: string
 }
 
 export async function structuredCall<S extends z.ZodType>(
@@ -40,7 +43,7 @@ export async function structuredCall<S extends z.ZodType>(
   // Streamed (then collected) so long audits with many screenshots can't hit
   // HTTP timeouts; adaptive thinking tokens count toward max_tokens.
   const stream = anthropic.beta.messages.stream({
-    model: FISCHER_MODEL,
+    model: opts.model ?? FISCHER_MODEL,
     max_tokens: opts.maxTokens ?? 32000,
     system: opts.system,
     messages: [{ role: 'user', content: opts.content }],

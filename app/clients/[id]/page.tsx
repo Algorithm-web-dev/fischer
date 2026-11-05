@@ -289,19 +289,24 @@ function Pages({ client, trends, reload }: { client: any; trends: any; reload: (
     setPages(p.pages); setAudits(a.audits); setJourneys(j.checks)
   }, [client.id])
   useEffect(() => { load() }, [load])
+  // Refresh while audits are queued or running
+  useEffect(() => {
+    if (!audits.some(a => a.status === 'queued' || a.status === 'running')) return
+    const t = setInterval(load, 10000)
+    return () => clearInterval(t)
+  }, [audits, load])
 
   async function add() {
     try { await api('/api/tracked-pages', { method: 'POST', json: { clientId: client.id, ...form } }); setMsg(''); load() }
     catch (e) { setMsg(e instanceof Error ? e.message : 'Failed') }
   }
   async function runNow(p: any) {
-    setBusy(p.id); setMsg('Running audit — capturing the full page on desktop and mobile, then analysing. This takes 1–4 minutes…')
+    setBusy(p.id)
     try {
-      const r = await api('/api/audit', { method: 'POST', json: { clientId: client.id, pageUrl: p.page_url, pageType: p.page_type, businessGoal: p.business_goal } })
-      if (r.status === 'needs_manual_input') setMsg(`Capture incomplete: ${Object.values(r.reasons).join(' · ')} — open the audit page to supply the missing piece.`)
-      else { setMsg(''); window.location.href = `/audit?view=${r.auditId}` }
+      await api('/api/audit', { method: 'POST', json: { clientId: client.id, pageUrl: p.page_url, pageType: p.page_type, businessGoal: p.business_goal, async: true } })
+      setMsg('Audit queued — it starts within a minute and takes 1–4 minutes. It will appear under "All audit runs".')
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Audit failed') }
-    finally { setBusy(null); load(); reload() }
+    finally { setBusy(null); load() }
   }
 
   async function checkJourney(p: any) {
