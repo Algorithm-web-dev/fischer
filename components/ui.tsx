@@ -41,6 +41,7 @@ export function Nav() {
       <span style={{ fontWeight: 700, letterSpacing: 2 }}>♟ FISCHER</span>
       <Link href="/clients" style={link}>Clients</Link>
       <Link href="/audit" style={link}>Run audit</Link>
+      <Link href="/library" style={link}>Library</Link>
       <button
         onClick={async () => { await fetch('/api/auth', { method: 'DELETE' }); window.location.href = '/' }}
         style={{ ...link, marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}

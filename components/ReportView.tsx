@@ -134,6 +134,13 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
           </div>
         </Section>
 
+        {r.benchmark && r.benchmark.clientRate != null && (
+          <p style={{ fontSize: 14, background: C.bg, padding: '10px 12px', borderRadius: 8, marginTop: 14 }}>
+            <strong>Industry comparison:</strong> over {r.benchmark.months[0]} – {r.benchmark.months[r.benchmark.months.length - 1]} your conversion rate was {r.benchmark.clientRate.toFixed(2)}%, against a median of {r.benchmark.median.toFixed(2)}% across {r.benchmark.clients} {r.benchmark.industry} sites we work with ({r.benchmark.position}).
+            {r.benchmark.devices.filter(d => d.clientRate != null).map(d => ` ${d.device[0].toUpperCase() + d.device.slice(1)}: ${d.clientRate!.toFixed(2)}% vs ${d.median.toFixed(2)}%.`).join('')}
+          </p>
+        )}
+
         {r.trend.some(t => t.sessions != null || t.avgFischerScore != null) && (
           <Section title="Six-month trend" kicker="Progress">
             <div className="rv-two">

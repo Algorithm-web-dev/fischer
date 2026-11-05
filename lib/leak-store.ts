@@ -30,7 +30,8 @@ export async function runLeakAnalysis(
     conversionEvent: client.ga4_conversion_event,
     valuePerConversion: client.avg_order_value || crm?.valuePerLead || null,
     siteOrigin: originOf(client.primary_url),
-    targetOverrides: targets?.overrides
+    targetOverrides: targets?.overrides,
+    targetFloors: targets?.floors
   })
   if (targets?.note) data.notes.push(targets.note)
   if (!client.avg_order_value && crm?.valuePerLead) data.notes.push(`Value per conversion taken from the CRM: ${crm.valuePerLead} revenue per lead over 90 days.`)

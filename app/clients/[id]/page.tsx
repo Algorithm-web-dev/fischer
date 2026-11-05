@@ -84,8 +84,19 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
 function Overview({ trends }: { trends: any }) {
   const months: any[] = trends.months
   const pages = Object.entries(trends.scoreHistory as Record<string, any[]>)
+  const [bench, setBench] = useState<any>(undefined)
+  useEffect(() => { api(`/api/benchmarks?clientId=${trends.client.id}`).then(d => setBench(d.benchmark)).catch(() => setBench(null)) }, [trends.client.id])
   return (
     <>
+      {bench && (
+        <div style={cardStyle}>
+          <h3 style={{ marginTop: 0 }}>vs {bench.industry} industry <span style={{ fontSize: 12, color: T.muted, fontWeight: 400 }}>{bench.clients} clients · {bench.months[0]} – {bench.months[2]}</span></h3>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', fontSize: 14 }}>
+            <div>Conversion rate: <strong>{bench.clientRate ?? '—'}%</strong> vs median <strong>{bench.median}%</strong>{bench.position && <span style={{ color: /bottom|below/.test(bench.position) ? T.bad : T.good }}> · {bench.position}</span>}</div>
+            {bench.devices.map((d: any) => <div key={d.device}>{d.device}: <strong>{d.clientRate ?? '—'}%</strong> vs {d.median}%</div>)}
+          </div>
+        </div>
+      )}
       <div style={cardStyle}>
         <h3 style={{ marginTop: 0 }}>Month by month</h3>
         {months.length === 0 ? <p style={{ color: T.muted }}>No monthly snapshots yet. They are built automatically each day once GA4 or Clarity is connected (Settings → Test connections).</p> : (

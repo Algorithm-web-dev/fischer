@@ -12,6 +12,7 @@ import { buildTrackingReport } from './tracking'
 import { formatFunnelForPrompt } from './funnels'
 import { raiseAlert, resolveAlerts } from './alerts'
 import { leadQualityReport, normalisePath } from './lead-quality'
+import { libraryPromptSection } from './test-library'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -98,10 +99,11 @@ export async function runAuditPipeline(params: {
     ? await loadChangesSince(supabase, client.id, input.pageUrl, previous.completed_at)
     : []
 
-  const [leak, tracking, leadSection] = await Promise.all([
+  const [leak, tracking, leadSection, librarySection] = await Promise.all([
     client ? loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : Promise.resolve(null),
     buildTrackingReport({ capture, pageUrl: input.pageUrl, businessGoal: input.businessGoal, client }).catch(() => null),
-    client ? leadSectionFor(supabase, client.id, input.pageUrl).catch(() => '') : Promise.resolve('')
+    client ? leadSectionFor(supabase, client.id, input.pageUrl).catch(() => '') : Promise.resolve(''),
+    libraryPromptSection(supabase, client?.industry).catch(() => '')
   ])
 
   const result = await runFischerAudit({
@@ -117,7 +119,7 @@ export async function runAuditPipeline(params: {
     changesSincePrevious,
     leak: leak && 'page' in leak && leak.page ? leak as any : null,
     tracking,
-    extraSections: [leak?.funnelSection ?? '', leadSection]
+    extraSections: [leak?.funnelSection ?? '', leadSection, librarySection]
   }, model)
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)

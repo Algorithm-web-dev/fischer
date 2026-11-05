@@ -87,7 +87,8 @@ export function computeLeaks(params: {
   conversionEvent?: string | null
   siteOrigin?: string | null
   minCellSessions?: number
-  targetOverrides?: Partial<Record<string, number>>   // device → CVR % (e.g. from benchmarks)
+  targetOverrides?: Partial<Record<string, number>>   // device → CVR %, replaces the site rate
+  targetFloors?: Partial<Record<string, number>>      // device → minimum target CVR % (from industry benchmarks)
 }): LeakAnalysis {
   const minSessions = params.minCellSessions ?? MIN_CELL_SESSIONS
   const periodDays = Math.round((Date.parse(params.range.endDate) - Date.parse(params.range.startDate)) / 86400000) + 1
@@ -113,7 +114,8 @@ export function computeLeaks(params: {
   const leakCells: LeakCell[] = []
   for (const c of params.cells) {
     if (c.sessions < minSessions || c.page === '(not set)') continue
-    const target = params.targetOverrides?.[c.device] ?? byDevice[c.device]?.conversionRate ?? 0
+    const own = params.targetOverrides?.[c.device] ?? byDevice[c.device]?.conversionRate ?? 0
+    const target = Math.max(own, params.targetFloors?.[c.device] ?? 0)
     const rate = (c.conversions / c.sessions) * 100
     const lost = Math.max(0, (c.sessions * (target - rate)) / 100)
     leakCells.push({
@@ -206,6 +208,7 @@ export async function fetchLeakAnalysis(params: {
   valuePerConversion?: number | null
   siteOrigin?: string | null
   targetOverrides?: Partial<Record<string, number>>
+  targetFloors?: Partial<Record<string, number>>
 }): Promise<LeakAnalysis> {
   const ga = getGA4Client()
   const property = `properties/${params.propertyId}`
@@ -257,7 +260,8 @@ export async function fetchLeakAnalysis(params: {
     valueBasis: basis,
     conversionEvent: params.conversionEvent,
     siteOrigin: params.siteOrigin,
-    targetOverrides: params.targetOverrides
+    targetOverrides: params.targetOverrides,
+    targetFloors: params.targetFloors
   })
 }
 

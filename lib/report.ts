@@ -8,6 +8,7 @@ import { measureChangeImpact, periodToDate, shiftPeriod, type ChangeImpact } fro
 import { pctChange, type TestResultStats } from './stats'
 import type { LeakAnalysis } from './leaks'
 import { computeLeadQuality, type LeadQualityReport } from './lead-quality'
+import { clientBenchmark, type ClientBenchmark } from './benchmarks'
 
 export interface KpiValue { current: number | null; previous: number | null; changePct: number | null }
 
@@ -68,6 +69,7 @@ export interface MonthlyReport {
     funnel: LeakAnalysis['funnel']
   } | null
   leadQuality: LeadQualityReport | null
+  benchmark: ClientBenchmark | null
 }
 
 const monthLabel = (period: string) =>
@@ -211,6 +213,8 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     .eq('client_id', clientId).gte('created_at', `${range.startDate}T00:00:00Z`).lte('created_at', `${range.endDate}T23:59:59Z`).limit(20000)
   const leadQuality = leadRows?.length ? computeLeadQuality(leadRows as any, { from: range.startDate, to: range.endDate }) : null
 
+  const benchmark = await clientBenchmark(supabase, c).catch(() => null)
+
   const latestOverall = (audits ?? [])[0]?.output as AuditResult | undefined
   const nextMonth = [
     ...(tests ?? []).filter(tb => tb.status === 'approved' || tb.status === 'draft').slice(0, 3).map(tb => `A/B test: ${tb.hypothesis_name}`),
@@ -258,6 +262,7 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     nextMonth,
     dataNotes,
     leaks,
-    leadQuality
+    leadQuality,
+    benchmark
   }
 }
