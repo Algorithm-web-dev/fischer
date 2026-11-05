@@ -313,6 +313,19 @@ function FunnelCard({ f, money }: { f: any; money: ((n: number) => string) | nul
   )
 }
 
+function UsageCard({ clientId }: { clientId: string }) {
+  const [u, setU] = useState<any>(null)
+  useEffect(() => { api(`/api/usage?clientId=${clientId}&months=6`).then(setU).catch(() => {}) }, [clientId])
+  if (!u || u.byMonth.length === 0) return null
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ marginTop: 0 }}>Claude cost for this client</h3>
+      <div style={{ fontSize: 14 }}>{u.byMonth.map((m: any) => <span key={m.key} style={{ marginRight: 16 }}>{m.key}: <strong>${m.costUsd.toFixed(2)}</strong></span>)}</div>
+      <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>Average audit ${u.avgAuditCostUsd ?? '—'} · {u.byFeature.map((f: any) => `${f.key} $${f.costUsd.toFixed(2)}`).join(' · ')}</div>
+    </div>
+  )
+}
+
 function TrackingKit({ client }: { client: any }) {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const snippet = `<script>
@@ -630,6 +643,7 @@ function Settings({ client, reload }: { client: any; reload: () => void }) {
           </div>
         ))}
       </div>
+      <UsageCard clientId={client.id} />
       <TrackingKit client={client} />
       <div style={cardStyle}>
         <ClientForm initial={toFormValues(client)} submitLabel="Save changes" onSubmit={async v => { await api('/api/clients', { method: 'PATCH', json: { id: client.id, ...v } }); reload() }} />

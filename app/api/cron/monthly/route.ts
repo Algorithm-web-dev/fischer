@@ -6,6 +6,7 @@ import { enqueueAudit } from '@/lib/queue'
 import { runLeakAnalysis, trackTopLeaks } from '@/lib/leak-store'
 import { monthRange } from '@/lib/ga4-audit'
 import { raiseAlert } from '@/lib/alerts'
+import { logError } from '@/lib/errors'
 import { shiftPeriod } from '@/lib/snapshots'
 
 export const maxDuration = 300
@@ -72,6 +73,7 @@ export async function GET(req: NextRequest) {
         }
       } catch (err) {
         log.push({ client: c.name, period: p, snapshot: 'failed', error: err instanceof Error ? err.message : String(err) })
+        await logError('cron:monthly:snapshot', err, { clientId: c.id, period: p })
       }
     }
   }

@@ -59,6 +59,7 @@ ${PXL_CRITERIA.map((c, i) => `${i + 1}. ${c.question}`).join('\n')}
 Return one boolean and one short reasoning sentence per criterion.`
 
   const { criteria, reasoning } = await structuredCall({
+    track: { feature: 'pxl_score' },
     schema: PxlSchema,
     system: 'You are Fischer scoring a CRO hypothesis against the PXL prioritization framework. Be strict and evidence-based — an unclear case is a "no," not a generous "yes."',
     content: prompt,

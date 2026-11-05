@@ -28,6 +28,9 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+/** What a call was for — recorded with its token usage and cost (llm_usage table). */
+export interface UsageTag { feature: string; clientId?: string | null; auditId?: string | null }
+
 export interface StructuredCallOptions<S extends z.ZodType> {
   schema: S
   system: string
@@ -35,6 +38,47 @@ export interface StructuredCallOptions<S extends z.ZodType> {
   maxTokens?: number
   effort?: Effort
   model?: string
+  track?: UsageTag
+}
+
+// USD per million tokens (input, output). Cache reads bill at 10% of input,
+// cache writes at 125%. Update when pricing changes; unknown models are
+// recorded with cost 0 and their token counts.
+const PRICES: Record<string, { in: number; out: number }> = {
+  'claude-opus-5-5': { in: 4, out: 20 },
+  'claude-sonnet-5-5': { in: 2, out: 10 },
+  'claude-haiku-5-5': { in: 0.1, out: 0.5 },
+  'claude-fable-5-1': { in: 10, out: 50 },
+  'claude-opus-5': { in: 5, out: 25 },
+  'claude-opus-4-8': { in: 5, out: 25 },
+  'claude-sonnet-5': { in: 2, out: 10 }
+}
+const WEB_SEARCH_USD = 0.01 // per search
+
+export function costUsd(model: string, u: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }, webSearches = 0): number {
+  const p = PRICES[model] ?? Object.entries(PRICES).find(([k]) => model.startsWith(k))?.[1]
+  if (!p) return Math.round(webSearches * WEB_SEARCH_USD * 10000) / 10000
+  const cost = ((u.input_tokens ?? 0) * p.in + (u.output_tokens ?? 0) * p.out
+    + (u.cache_read_input_tokens ?? 0) * p.in * 0.1 + (u.cache_creation_input_tokens ?? 0) * p.in * 1.25) / 1_000_000
+    + webSearches * WEB_SEARCH_USD
+  return Math.round(cost * 10000) / 10000
+}
+
+async function recordUsage(tag: UsageTag | undefined, response: { model: string; usage: any }) {
+  if (!tag) return
+  try {
+    const { createSupabaseServiceClient } = await import('./supabase')
+    const u = response.usage ?? {}
+    const searches = u.server_tool_use?.web_search_requests ?? 0
+    await createSupabaseServiceClient().from('llm_usage').insert({
+      feature: tag.feature, client_id: tag.clientId ?? null, audit_id: tag.auditId ?? null, model: response.model,
+      input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0,
+      cache_read_tokens: u.cache_read_input_tokens ?? 0, cache_write_tokens: u.cache_creation_input_tokens ?? 0,
+      web_searches: searches, cost_usd: costUsd(response.model, u, searches)
+    })
+  } catch (err) {
+    console.error('[fischer] could not record usage:', err)
+  }
 }
 
 export async function structuredCall<S extends z.ZodType>(
@@ -55,6 +99,7 @@ export async function structuredCall<S extends z.ZodType>(
     fallbacks: 'default'
   })
   const response = await stream.finalMessage()
+  await recordUsage(opts.track, response)
 
   if (response.stop_reason === 'refusal') {
     throw new Error('The model declined this request (refusal).')
@@ -69,7 +114,7 @@ export async function structuredCall<S extends z.ZodType>(
 }
 
 /** Plain-text call with the web search server tool (used for traffic estimates). */
-export async function webSearchCall(prompt: string, maxTokens = 2000): Promise<string> {
+export async function webSearchCall(prompt: string, maxTokens = 2000, track?: UsageTag): Promise<string> {
   const response = await anthropic.beta.messages.create({
     model: FISCHER_MODEL,
     max_tokens: maxTokens,
@@ -79,6 +124,7 @@ export async function webSearchCall(prompt: string, maxTokens = 2000): Promise<s
     betas: [FALLBACK_BETA],
     fallbacks: 'default'
   })
+  await recordUsage(track, response)
   const text = response.content
     .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
     .map(b => b.text)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase'
 import { isCronAuthorized } from '@/lib/api'
 import { runAndStoreJourney } from '@/lib/journey-store'
+import { logError } from '@/lib/errors'
 
 export const maxDuration = 300
 
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
       log.push({ page: p.page_url, passed: check.passed })
     } catch (err) {
       log.push({ page: p.page_url, error: err instanceof Error ? err.message : String(err) })
+      await logError('cron:journeys', err, { clientId: p.client_id, page: p.page_url })
     }
   }
   return NextResponse.json({ ms: Date.now() - started, log })

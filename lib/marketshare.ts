@@ -65,6 +65,7 @@ Only list friction points you can see in the screenshots or text.`
     { type: 'text' as const, text: prompt }
   ]
   const result = await structuredCall({
+    track: { feature: 'competitor_audit' },
     schema: CompetitorSchema,
     system: 'You are Fischer — a CRO Intelligence Agent — running a fast comparative audit on a competitor page. Be concise and evidence-based; this is a benchmarking pass, not a full audit.',
     content,
@@ -96,7 +97,9 @@ export async function estimateTraffic(url: string): Promise<TrafficEstimate> {
   const domain = new URL(url).hostname
 
   const raw = await webSearchCall(
-    `Search for estimated monthly website traffic for ${domain}. Use SimilarWeb, Semrush, or any available public traffic data. End your answer with ONE line in the form "ESTIMATE: 50k-100k monthly visits" (or "ESTIMATE: Unknown").`
+    `Search for estimated monthly website traffic for ${domain}. Use SimilarWeb, Semrush, or any available public traffic data. End your answer with ONE line in the form "ESTIMATE: 50k-100k monthly visits" (or "ESTIMATE: Unknown").`,
+    2000,
+    { feature: 'traffic_estimate' }
   )
   const estimate = raw.match(/ESTIMATE:\s*(.+)/i)?.[1]?.trim() || 'Unknown'
 
@@ -150,6 +153,7 @@ ${params.competitors.map(c => `- ${c.name} (${c.url}): Fischer Score ${c.score},
 Answer: where does the client sit competitively? Which specific CRO gaps are costing market share vs each competitor? What's the estimated monthly revenue opportunity if the top gaps are closed? What's a prioritised 3-step recovery roadmap?`
 
   return structuredCall({
+    track: { feature: 'market_share' },
     schema: SynthesisSchema,
     system: 'You are Fischer\'s Market Intelligence layer — commercial, specific, and grounded only in the scores and data given. Do not invent competitor details beyond what was provided.',
     content: prompt,

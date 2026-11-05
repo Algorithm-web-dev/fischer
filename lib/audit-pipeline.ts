@@ -120,7 +120,7 @@ export async function runAuditPipeline(params: {
     leak: leak && 'page' in leak && leak.page ? leak as any : null,
     tracking,
     extraSections: [leak?.funnelSection ?? '', leadSection, librarySection]
-  }, model)
+  }, model, { feature: params.trigger === 'scheduled' ? 'audit_scheduled' : 'audit', clientId: client?.id ?? null, auditId })
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
 

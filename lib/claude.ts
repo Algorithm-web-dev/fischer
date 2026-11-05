@@ -460,9 +460,10 @@ export function finaliseAudit(output: AuditOutput, ctx: AuditContext): AuditResu
   }
 }
 
-export async function runFischerAudit(ctx: AuditContext, model?: string): Promise<AuditResult> {
+export async function runFischerAudit(ctx: AuditContext, model?: string, track?: import('./llm').UsageTag): Promise<AuditResult> {
   const output = await structuredCall({
     model,
+    track: track ?? { feature: 'audit', clientId: ctx.input.clientId ?? null },
     schema: AuditOutputSchema,
     system: FISCHER_SYSTEM_PROMPT,
     content: buildContentBlocks(ctx),

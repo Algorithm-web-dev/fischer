@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { runAuditPipeline, type ClientRow } from './audit-pipeline'
 import type { AuditInput } from './claude'
 import { raiseAlert } from './alerts'
+import { logError } from './errors'
 
 /**
  * Background audit queue.
@@ -65,6 +66,7 @@ export async function processNextJob(supabase: SupabaseClient): Promise<{ auditI
     return { auditId: job.id, status: outcome.status }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    await logError('queue:audit', err, { clientId: client?.id, auditId: job.id, attempt: job.attempts })
     const final = job.attempts >= MAX_ATTEMPTS
     await supabase.from('audits').update({
       status: final ? 'failed' : 'queued',

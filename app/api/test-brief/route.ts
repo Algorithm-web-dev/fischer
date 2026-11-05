@@ -89,6 +89,7 @@ Quote the exact current copy for the control and write the exact new copy for th
 
   try {
     const brief = await structuredCall({
+      track: { feature: 'test_brief', clientId: resolvedClientId, auditId },
       schema: TestBriefSchema,
       system: 'You are Fischer\'s Test Brief Generator. You produce implementation-ready A/B test briefs grounded in the real page copy you are given.',
       content: prompt,

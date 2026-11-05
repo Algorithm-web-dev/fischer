@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase'
 import { auditRateLimit, checkRateLimit } from '@/lib/ratelimit'
 import { isValidHttpUrl } from '@/lib/validate'
 import { enqueueAudit } from '@/lib/queue'
+import { logError } from '@/lib/errors'
 
 // Full-page capture at two viewports + PageSpeed + model call. Needs a Vercel
 // plan that allows functions longer than 60s (Pro: up to 300s; 800s with Fluid compute).
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
       result: outcome.result
     })
   } catch (err) {
-    console.error('Fischer audit error:', err)
+    await logError('api:audit', err, { clientId: client?.id, auditId })
     await supabase.from('audits').update({
       status: 'failed',
       error_message: err instanceof Error ? err.message : 'Unknown error'
