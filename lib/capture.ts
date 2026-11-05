@@ -96,6 +96,8 @@ export interface ViewportCapture {
   layout?: LayoutFacts
   consoleErrors: string[]
   failedRequests: number
+  /** Tag/pixel network requests and dataLayer seen during load (input to lib/tracking.ts) */
+  network?: { trackingRequests: string[]; dataLayer: unknown[] }
   finalUrl?: string
   httpStatus?: number
   renderedHtml?: string
@@ -200,6 +202,11 @@ async function captureViewport(browser: Browser, url: string, name: ViewportName
     if (consoleErrors.length < 20) consoleErrors.push(String((err as Error)?.message ?? err).slice(0, 200))
   })
   page.on('requestfailed', () => { failedRequests++ })
+  const trackingRequests: string[] = []
+  page.on('request', req => {
+    const u = req.url()
+    if (trackingRequests.length < 300 && TRACKING_HOST.test(u)) trackingRequests.push(u.slice(0, 600))
+  })
 
   try {
     await page.setUserAgent(cfg.userAgent)
@@ -251,16 +258,33 @@ async function captureViewport(browser: Browser, url: string, name: ViewportName
     }
 
     const renderedHtml = await page.content()
+    const dataLayer = (await page.evaluate(DATALAYER_SCRIPT).catch(() => [])) as unknown[]
 
     return {
       viewport: name, ok: segments.length > 0, width: cfg.width, segments,
       truncated: pageHeight > maxHeight, layout, consoleErrors, failedRequests,
-      finalUrl: page.url(), httpStatus, renderedHtml, loadTimeMs
+      finalUrl: page.url(), httpStatus, renderedHtml, loadTimeMs,
+      network: { trackingRequests, dataLayer }
     }
   } finally {
     await page.close().catch(() => {})
   }
 }
+
+// Hosts of analytics / ad tags we want to see firing. Server-side GTM setups
+// use the client's own domain, so /g/collect paths are matched on any host.
+const TRACKING_HOST = /(google-analytics\.com|googletagmanager\.com|\/g\/collect|clarity\.ms|connect\.facebook\.net|facebook\.com\/tr|googleadservices\.com|googleads\.g\.doubleclick\.net|doubleclick\.net\/pagead|snap\.licdn\.com|px\.ads\.linkedin\.com|analytics\.tiktok\.com|static\.hotjar\.com|script\.hotjar\.com)/i
+
+// First 80 dataLayer entries, made JSON-safe (gtag pushes `arguments` objects).
+const DATALAYER_SCRIPT = `(() => {
+  const dl = Array.isArray(window.dataLayer) ? window.dataLayer.slice(0, 80) : [];
+  return dl.map(e => {
+    try {
+      if (e && typeof e === 'object' && typeof e.length === 'number' && !Array.isArray(e)) e = Array.from(e);
+      return JSON.parse(JSON.stringify(e, (k, v) => (typeof v === 'function' || (v && v.nodeType)) ? undefined : v));
+    } catch { return null; }
+  }).filter(Boolean);
+})()`
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))

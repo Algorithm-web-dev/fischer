@@ -157,6 +157,25 @@ function AuditView({ id }: { id: string }) {
         </div>
       </div>
 
+      {audit.tracking && (
+        <div style={{ ...cardStyle, borderColor: audit.tracking.healthy ? T.line : T.bad }}>
+          <div style={labelStyle}>Tracking check {audit.tracking.healthy ? '— healthy' : '— problems found'}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <Pill color={audit.tracking.detected.ga4Hits ? T.good : T.bad}>GA4 {audit.tracking.detected.ga4MeasurementIds.join(', ') || 'missing'}</Pill>
+            <Pill color={audit.tracking.detected.gtmContainers.length ? T.good : T.muted}>GTM {audit.tracking.detected.gtmContainers.join(', ') || 'none'}</Pill>
+            <Pill color={audit.tracking.detected.clarityProjectIds.length ? T.good : T.warn}>Clarity {audit.tracking.detected.clarityProjectIds.join(', ') || 'none'}</Pill>
+            <Pill color={audit.tracking.detected.analyticsConsent === 'denied' ? T.bad : T.muted}>consent: {audit.tracking.detected.analyticsConsent}</Pill>
+            {audit.tracking.detected.metaPixel && <Pill>Meta pixel</Pill>}
+            {audit.tracking.detected.googleAdsIds.length > 0 && <Pill>Google Ads</Pill>}
+          </div>
+          {audit.tracking.issues.map((i: any) => (
+            <div key={i.code} style={{ fontSize: 13, padding: '4px 0' }}>
+              <Pill color={i.severity === 'high' ? T.bad : i.severity === 'medium' ? T.warn : T.muted}>{i.severity}</Pill> {i.message} <span style={{ color: T.muted }}>— {i.fix}</span>
+            </div>))}
+          {audit.tracking.events && <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>GA4 key events: {audit.tracking.events.filter((e: any) => e.isKeyEvent).map((e: any) => `${e.name} (${e.count})`).join(', ') || 'none'}</div>}
+        </div>
+      )}
+
       {audit.page_diff?.changed && (
         <div style={cardStyle}>
           <div style={labelStyle}>Changes since previous audit</div>

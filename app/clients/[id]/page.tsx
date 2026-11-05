@@ -456,6 +456,7 @@ function Settings({ client, reload }: { client: any; reload: () => void }) {
             <strong>{k === 'ga4' ? 'GA4' : 'Clarity'}:</strong>{' '}
             {test[k].ok ? <span style={{ color: T.good }}>connected {k === 'ga4' ? `— ${fmt(test[k].sessionsLast7Days)} sessions, ${fmt(test[k].conversionsLast7Days)} conversions in 7 days` : `— ${fmt(test[k].sessions)} sessions yesterday across ${test[k].pages} pages`}</span> : <span style={{ color: T.bad }}>{test[k].error}</span>}
             {test[k].warning && <div style={{ color: T.warn }}>{test[k].warning}</div>}
+            {k === 'ga4' && test.ga4.events && <div style={{ color: T.muted, marginTop: 4 }}>Key events (30d): {test.ga4.events.filter((e: any) => e.isKeyEvent).map((e: any) => `${e.name} (${fmt(e.count)})`).join(', ') || <span style={{ color: T.bad }}>none — conversion rates will be 0</span>}<br />All events: {test.ga4.events.slice(0, 20).map((e: any) => e.name).join(', ')}</div>}
           </div>
         ))}
       </div>

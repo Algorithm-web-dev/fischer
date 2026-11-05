@@ -8,6 +8,7 @@ import { aggregateStoredDays, fetchClarityData, type ClarityDaily, type ClarityR
 import { runFischerAudit, FISCHER_MODEL, type AuditInput, type AuditResult, type PreviousAuditContext, type ChangeLogEntry } from './claude'
 import { fingerprintPage, diffFingerprints, type PageFingerprint, type PageDiff } from './page-diff'
 import { leakForUrl, type LeakAnalysis } from './leaks'
+import { buildTrackingReport } from './tracking'
 
 export const SCREENSHOT_BUCKET = 'fischer-screenshots'
 
@@ -90,7 +91,10 @@ export async function runAuditPipeline(params: {
     ? await loadChangesSince(supabase, client.id, input.pageUrl, previous.completed_at)
     : []
 
-  const leak = client ? await loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : null
+  const [leak, tracking] = await Promise.all([
+    client ? loadLeak(supabase, client.id, input.pageUrl, client.currency || 'ZAR') : Promise.resolve(null),
+    buildTrackingReport({ capture, pageUrl: input.pageUrl, businessGoal: input.businessGoal, client }).catch(() => null)
+  ])
 
   const result = await runFischerAudit({
     input,
@@ -103,7 +107,8 @@ export async function runAuditPipeline(params: {
     valuePerConversion: client?.avg_order_value,
     previous: previous ? toPreviousContext(previous) : null,
     changesSincePrevious,
-    leak
+    leak,
+    tracking
   })
 
   const screenshots = await uploadScreenshots(supabase, auditId, capture)
@@ -118,7 +123,8 @@ export async function runAuditPipeline(params: {
     ga4: ga4 ? (ga4.success ? 'live' : `failed: ${ga4.error}`) : 'not_configured',
     clarity: clarity ? (clarity.success ? `${clarity.source} (${clarity.days}d, ${clarity.isPageLevel ? 'page' : 'site-wide'})` : `failed: ${clarity.error}`) : 'not_configured',
     captureMode: input.manualHtml || input.manualScreenshotDesktop || input.manualScreenshotMobile ? 'mixed' : 'auto',
-    unverifiedFindings: result.unverifiedFindings.length
+    unverifiedFindings: result.unverifiedFindings.length,
+    tracking: tracking ? (tracking.healthy ? 'healthy' : `${tracking.issues.filter(i => i.severity === 'high').length} high issue(s)`) : 'not_checked'
   }
 
   const { error: updateError } = await supabase.from('audits').update({
@@ -137,6 +143,7 @@ export async function runAuditPipeline(params: {
     clarity_data: clarity,
     capture_metadata: dataSources,
     page_fingerprint: fingerprint,
+    tracking,
     page_diff: pageDiff,
     previous_audit_id: previous?.id ?? null,
     model: FISCHER_MODEL,

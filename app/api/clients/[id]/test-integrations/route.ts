@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, bad } from '@/lib/api'
 import { fetchGA4AuditData, lastNDays } from '@/lib/ga4-audit'
 import { storeClarityDay } from '@/lib/snapshots'
+import { fetchGA4EventInventory } from '@/lib/tracking'
 
 export const maxDuration = 60
 
@@ -19,8 +20,9 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   const out: Record<string, unknown> = {}
   if (client.ga4_property_id) {
     const r = await fetchGA4AuditData(client.ga4_property_id, { range: lastNDays(7), conversionEvent: client.ga4_conversion_event })
+    const events = r.success ? await fetchGA4EventInventory(client.ga4_property_id).catch(() => null) : null
     out.ga4 = r.success
-      ? { ok: true, sessionsLast7Days: r.totals?.sessions, conversionsLast7Days: r.totals?.conversions,
+      ? { ok: true, sessionsLast7Days: r.totals?.sessions, conversionsLast7Days: r.totals?.conversions, events,
           warning: r.totals?.conversions === 0 ? 'Connected, but 0 conversions in 7 days — check the conversion event is marked as a key event.' : undefined }
       : { ok: false, error: r.error }
   } else out.ga4 = { ok: false, error: 'No GA4 property ID set.' }
