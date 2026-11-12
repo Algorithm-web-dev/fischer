@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 /**
  * Single place every Claude call in Fischer goes through.
@@ -84,33 +84,111 @@ async function recordUsage(tag: UsageTag | undefined, response: { model: string;
 export async function structuredCall<S extends z.ZodType>(
   opts: StructuredCallOptions<S>
 ): Promise<z.infer<S>> {
+  if (!STRICT_TOO_LARGE.has(opts.schema)) {
+    try {
+      return await strictCall(opts)
+    } catch (err) {
+      // Large schemas (the full audit) can exceed the structured-output
+      // grammar limit. The API rejects these up front, before any tokens are
+      // generated, so falling back costs nothing extra.
+      if (!isGrammarTooLarge(err)) throw err
+      STRICT_TOO_LARGE.add(opts.schema)
+      console.warn('[fischer] schema too large for strict structured output — using validated JSON mode')
+    }
+  }
+  return jsonModeCall(opts)
+}
+
+/** Schemas the API has rejected as too complex, so later calls skip straight to JSON mode. */
+const STRICT_TOO_LARGE = new WeakSet<z.ZodType>()
+
+export function isGrammarTooLarge(err: unknown): boolean {
+  const status = (err as { status?: number })?.status
+  const msg = err instanceof Error ? err.message : String(err)
+  return (status === 400 || /\b400\b/.test(msg)) && /grammar is too large|schema is too complex|too many strict|simplify your (tool )?schemas?/i.test(msg)
+}
+
+function stream(opts: StructuredCallOptions<z.ZodType>, system: string, messages: Anthropic.Beta.BetaMessageParam[], format?: ReturnType<typeof betaZodOutputFormat>) {
   // Streamed (then collected) so long audits with many screenshots can't hit
   // HTTP timeouts; adaptive thinking tokens count toward max_tokens.
-  const stream = anthropic.beta.messages.stream({
+  return anthropic.beta.messages.stream({
     model: opts.model ?? FISCHER_MODEL,
     max_tokens: opts.maxTokens ?? 32000,
-    system: opts.system,
-    messages: [{ role: 'user', content: opts.content }],
-    output_config: {
-      effort: opts.effort ?? 'high',
-      format: betaZodOutputFormat(opts.schema)
-    },
+    system,
+    messages,
+    output_config: format ? { effort: opts.effort ?? 'high', format } : { effort: opts.effort ?? 'high' },
     betas: [FALLBACK_BETA],
     fallbacks: 'default'
   })
-  const response = await stream.finalMessage()
-  await recordUsage(opts.track, response)
+}
 
+function checkStop(response: Anthropic.Beta.BetaMessage) {
   if (response.stop_reason === 'refusal') {
     throw new Error('The model declined this request (refusal).')
   }
   if (response.stop_reason === 'max_tokens') {
     throw new Error('The model ran out of output tokens before finishing — raise maxTokens.')
   }
+}
+
+async function strictCall<S extends z.ZodType>(opts: StructuredCallOptions<S>): Promise<z.infer<S>> {
+  const response = await stream(opts, opts.system, [{ role: 'user', content: opts.content }], betaZodOutputFormat(opts.schema)).finalMessage()
+  await recordUsage(opts.track, response)
+  checkStop(response)
   if (response.parsed_output == null) {
     throw new Error('The model did not return output matching the expected schema.')
   }
   return response.parsed_output as z.infer<S>
+}
+
+/**
+ * Same contract without grammar-constrained decoding: the JSON Schema goes in
+ * the system prompt, the reply is parsed and validated with the same Zod
+ * schema, and the model gets one chance to correct a mismatch.
+ */
+async function jsonModeCall<S extends z.ZodType>(opts: StructuredCallOptions<S>): Promise<z.infer<S>> {
+  const jsonSchema = JSON.stringify(z.toJSONSchema(opts.schema, { unrepresentable: 'any' }))
+  const system = `${opts.system}
+
+OUTPUT FORMAT: reply with a single JSON object and nothing else — no prose, no markdown code fences. It must validate against this JSON Schema (every listed property is required; enum fields must use one of the listed values exactly):
+${jsonSchema}`
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: opts.content }]
+  let lastError = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await stream(opts, system, messages).finalMessage()
+    await recordUsage(opts.track, response)
+    checkStop(response)
+    const text = response.content
+      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
+      .map(b => b.text)
+      .join('')
+    const result = parseJsonReply(text, opts.schema)
+    if (result.ok) return result.value
+    lastError = result.error
+    messages.push(
+      { role: 'assistant', content: text || '(empty)' },
+      { role: 'user', content: `That reply did not match the required JSON Schema: ${result.error}\nReply again with the complete corrected JSON object only.` }
+    )
+  }
+  throw new Error(`The model did not return output matching the expected schema (${lastError}).`)
+}
+
+/** Pull the JSON object out of a text reply (tolerating code fences or stray prose) and validate it. */
+export function parseJsonReply<S extends z.ZodType>(text: string, schema: S): { ok: true; value: z.infer<S> } | { ok: false; error: string } {
+  const unfenced = text.replace(/```(?:json)?/gi, '')
+  const start = unfenced.indexOf('{')
+  const end = unfenced.lastIndexOf('}')
+  if (start < 0 || end <= start) return { ok: false, error: 'no JSON object found' }
+  let data: unknown
+  try {
+    data = JSON.parse(unfenced.slice(start, end + 1))
+  } catch (err) {
+    return { ok: false, error: `invalid JSON (${err instanceof Error ? err.message : String(err)})` }
+  }
+  const parsed = schema.safeParse(data)
+  if (parsed.success) return { ok: true, value: parsed.data }
+  const issues = parsed.error.issues.slice(0, 15).map(i => `${i.path.join('.') || '(root)'}: ${i.message}`)
+  return { ok: false, error: issues.join('; ') }
 }
 
 /** Plain-text call with the web search server tool (used for traffic estimates). */
