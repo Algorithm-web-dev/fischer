@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
 import type { AuditResult, FrictionPoint } from '@/lib/claude'
 import { MockupButton } from '@/components/Mockups'
+import { A11yCard, ClarityLinks } from '@/components/ExtraCards'
 
 const SEV = { high: T.bad, medium: T.warn, low: '#FFD700' }
 const STATUS: Record<string, string> = { resolved: T.good, improved: T.good, still_present: T.warn, worse: T.bad, cannot_verify: T.muted }
@@ -123,9 +124,11 @@ function AuditView({ id }: { id: string }) {
   const [briefBusy, setBriefBusy] = useState<number | null>(null)
   const [promoted, setPromoted] = useState(false)
   const [mockups, setMockups] = useState<any[]>([])
+  const [clarityProject, setClarityProject] = useState<string | null>(null)
 
   useEffect(() => { api(`/api/audits/${id}`).then(d => setAudit(d.audit)).catch(e => setError(e.message)) }, [id])
   useEffect(() => { api(`/api/mockups?auditId=${id}`).then(d => setMockups(d.mockups)).catch(() => {}) }, [id])
+  useEffect(() => { if (audit?.client_id) api(`/api/clients/${audit.client_id}`).then(d => setClarityProject(d.client.clarity_project_id)).catch(() => {}) }, [audit?.client_id])
   const mockupFor = (kind: string, i: number) => mockups.find(m => m.source === kind && m.source_index === i)
 
   if (error) return <Page title="Audit"><p style={{ color: T.bad }}>{error}</p></Page>
@@ -181,6 +184,8 @@ function AuditView({ id }: { id: string }) {
         </div>
       </div>
 
+      <div style={{ marginBottom: 14 }}><ClarityLinks projectId={clarityProject} pageUrl={audit.page_url} /></div>
+      <A11yCard a={audit.accessibility} />
       {audit.tracking && (
         <div style={{ ...cardStyle, borderColor: audit.tracking.healthy ? T.line : T.bad }}>
           <div style={labelStyle}>Tracking check {audit.tracking.healthy ? '— healthy' : '— problems found'}</div>

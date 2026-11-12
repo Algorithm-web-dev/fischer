@@ -167,6 +167,7 @@ export async function runAuditPipeline(params: {
     capture_metadata: dataSources,
     page_fingerprint: fingerprint,
     tracking,
+    accessibility: capture.desktop.accessibility ?? null,
     page_diff: pageDiff,
     previous_audit_id: previous?.id ?? null,
     model,

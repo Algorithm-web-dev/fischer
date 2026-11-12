@@ -9,6 +9,7 @@ import { Competitors } from '@/components/tabs/Competitors'
 import { ClientAccess } from '@/components/ClientAccess'
 import { GoogleConnect } from '@/components/GoogleConnect'
 import { BeforeAfter } from '@/components/Mockups'
+import { ReportEmails, SiteDiscovery } from '@/components/ExtraCards'
 
 type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'backlog' | 'changes' | 'tests' | 'guardrails' | 'competitors' | 'reports' | 'settings'
 
@@ -81,7 +82,7 @@ export default function ClientDashboard({ params }: { params: { id: string } }) 
           {tab === 'pages' && <Pages client={client} trends={trends} reload={load} />}
           {tab === 'changes' && <Changes clientId={client.id} />}
           {tab === 'tests' && <Tests clientId={client.id} />}
-          {tab === 'reports' && <Reports clientId={client.id} />}
+          {tab === 'reports' && <Reports client={client} />}
           {tab === 'settings' && <Settings client={client} reload={load} />}
         </>
       )}
@@ -416,6 +417,7 @@ function Pages({ client, trends, reload }: { client: any; trends: any; reload: (
 
   return (
     <>
+      <SiteDiscovery client={client} onTrack={() => load()} />
       <div style={cardStyle}>
         <h3 style={{ marginTop: 0 }}>Tracked pages</h3>
         <p style={{ color: T.muted, fontSize: 13, marginTop: -6 }}>Tracked pages are re-audited automatically every 30 days and included in monthly snapshots and reports.</p>
@@ -631,7 +633,8 @@ function TestDetail({ test: t, onSave, onSync }: { test: any; onSave: (json: unk
 }
 
 // ---------------------------------------------------------------- Reports
-function Reports({ clientId }: { clientId: string }) {
+function Reports({ client }: { client: any }) {
+  const clientId = client.id
   const [period, setPeriod] = useState(lastMonth())
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -653,6 +656,7 @@ function Reports({ clientId }: { clientId: string }) {
 
   const r = data?.report
   return (
+    <>
     <div style={cardStyle}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
         <Field label="Report month"><input type="month" style={{ ...inputStyle, width: 180 }} value={period} onChange={e => setPeriod(e.target.value)} /></Field>
@@ -678,6 +682,8 @@ function Reports({ clientId }: { clientId: string }) {
         </div>
       )}
     </div>
+    <ReportEmails client={client} period={period} />
+    </>
   )
 }
 

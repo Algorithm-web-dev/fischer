@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Page, cardStyle, labelStyle, T, api } from '@/components/ui'
 import { TeamAdmin } from '@/components/TeamAdmin'
+import { BrandingSettings } from '@/components/ExtraCards'
 
 const usd = (n: number) => `$${n.toFixed(2)}`
 
@@ -18,6 +19,7 @@ export default function AdminPage() {
   return (
     <Page title="Admin">
       {error && <div style={{ color: T.bad }}>{error}</div>}
+      <BrandingSettings />
       <TeamAdmin />
       {usage && (
         <>

@@ -9,6 +9,7 @@ import { pctChange, type TestResultStats } from './stats'
 import type { LeakAnalysis } from './leaks'
 import { computeLeadQuality, type LeadQualityReport } from './lead-quality'
 import { clientBenchmark, type ClientBenchmark } from './benchmarks'
+import { getBranding, type Branding } from './branding'
 
 export interface KpiValue { current: number | null; previous: number | null; changePct: number | null }
 
@@ -71,6 +72,7 @@ export interface MonthlyReport {
   } | null
   leadQuality: LeadQualityReport | null
   benchmark: ClientBenchmark | null
+  branding: Branding
 }
 
 const monthLabel = (period: string) =>
@@ -216,6 +218,7 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
   const leadQuality = leadRows?.length ? computeLeadQuality(leadRows as any, { from: range.startDate, to: range.endDate }) : null
 
   const benchmark = await clientBenchmark(supabase, c).catch(() => null)
+  const branding = await getBranding(supabase)
 
   const latestOverall = (audits ?? [])[0]?.output as AuditResult | undefined
   const nextMonth = [
@@ -265,6 +268,7 @@ export async function buildMonthlyReport(supabase: SupabaseClient, clientId: str
     dataNotes,
     leaks,
     leadQuality,
-    benchmark
+    benchmark,
+    branding
   }
 }

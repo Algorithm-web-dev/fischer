@@ -9,6 +9,7 @@ import type { ClarityResult } from './clarity'
 import { formatGA4ForPrompt } from './ga4-audit'
 import { formatClarityForPrompt } from './clarity'
 import { formatTrackingForPrompt } from './tracking'
+import { formatA11yForPrompt } from './accessibility'
 import { computeRevenueImpact, planTest, type RevenueImpact, type TestPlan } from './stats'
 import type { PageLeak } from './leaks'
 
@@ -20,7 +21,7 @@ export { anthropic, FISCHER_MODEL, FISCHER_SCHEDULED_MODEL } from './llm'
 
 export const EVIDENCE_SOURCES = [
   'screenshot_desktop', 'screenshot_mobile', 'layout_measurements', 'page_content',
-  'pagespeed', 'ga4', 'clarity', 'tracking', 'search_console', 'google_ads'
+  'pagespeed', 'ga4', 'clarity', 'tracking', 'search_console', 'google_ads', 'accessibility'
 ] as const
 export type EvidenceSource = typeof EVIDENCE_SOURCES[number]
 
@@ -239,6 +240,7 @@ ${ctx.changesSincePrevious.map(c => `- ${c.change_date}: ${c.title}${c.descripti
 
   if (ctx.leak) parts.push(formatLeakSection(ctx.leak))
   if (ctx.tracking) parts.push(formatTrackingForPrompt(ctx.tracking))
+  if (ctx.capture.desktop.accessibility) parts.push(formatA11yForPrompt(ctx.capture.desktop.accessibility))
   for (const extra of ctx.extraSections ?? []) if (extra) parts.push(extra)
 
   if (input.additionalContext) parts.push(`**ADDITIONAL CONTEXT FROM THE ACCOUNT MANAGER:**\n${input.additionalContext}`)
@@ -343,6 +345,7 @@ export function availableSources(ctx: AuditContext): Set<EvidenceSource> {
   if (ctx.ga4?.success) s.add('ga4')
   if (ctx.clarity?.success && (ctx.clarity.data?.totalSessions ?? 0) > 0) s.add('clarity')
   if (ctx.tracking) s.add('tracking')
+  if (ctx.capture.desktop.accessibility) s.add('accessibility')
   for (const extra of ctx.extraSources ?? []) s.add(extra)
   return s
 }

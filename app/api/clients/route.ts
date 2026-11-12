@@ -101,6 +101,14 @@ export async function PATCH(req: NextRequest) {
   if (body.reportLogoUrl !== undefined) updates.report_logo_url = body.reportLogoUrl || null
   if (body.reportContactName !== undefined) updates.report_contact_name = body.reportContactName || null
   if (body.autoTrackLeaks !== undefined) updates.auto_track_leaks = !!body.autoTrackLeaks
+  if (body.reportRecipients !== undefined) {
+    const list = (Array.isArray(body.reportRecipients) ? body.reportRecipients : String(body.reportRecipients).split(/[,;\s]+/)).map((e: string) => e.trim()).filter(Boolean)
+    const badEmail = list.find((e: string) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+    if (badEmail) return NextResponse.json({ error: `Not an email address: ${badEmail}` }, { status: 400 })
+    updates.report_recipients = list.slice(0, 20)
+  }
+  if (body.reportEmailEnabled !== undefined) updates.report_email_enabled = !!body.reportEmailEnabled
+  if (body.reportEmailDay !== undefined) updates.report_email_day = Math.min(28, Math.max(1, Number(body.reportEmailDay) || 5))
   if (body.reportContactEmail !== undefined) updates.report_contact_email = body.reportContactEmail || null
 
   const { data, error } = await supabase

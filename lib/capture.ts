@@ -1,5 +1,6 @@
 import type { Browser, Page } from 'puppeteer-core'
 import { parseHtml, scrapePage, type ScrapedContent } from './scraper'
+import { runAxe, type A11ySummary } from './accessibility'
 
 /**
  * Real-browser page capture — the thing Fischer audits from.
@@ -98,6 +99,8 @@ export interface ViewportCapture {
   failedRequests: number
   /** Tag/pixel network requests and dataLayer seen during load (input to lib/tracking.ts) */
   network?: { trackingRequests: string[]; dataLayer: unknown[] }
+  /** axe-core WCAG check (desktop only) */
+  accessibility?: A11ySummary | null
   finalUrl?: string
   httpStatus?: number
   renderedHtml?: string
@@ -240,6 +243,7 @@ async function captureViewport(browser: Browser, url: string, name: ViewportName
 
     // Layout facts measured from the real render, at the top of the page.
     const layout = (await page.evaluate(LAYOUT_SCRIPT)) as LayoutFacts
+    const accessibility = name === 'desktop' ? await runAxe(page) : undefined
 
     const pageHeight = Math.max(layout.pageHeight, cfg.height)
     const maxHeight = cfg.segmentHeight * cfg.maxSegments
@@ -264,7 +268,8 @@ async function captureViewport(browser: Browser, url: string, name: ViewportName
       viewport: name, ok: segments.length > 0, width: cfg.width, segments,
       truncated: pageHeight > maxHeight, layout, consoleErrors, failedRequests,
       finalUrl: page.url(), httpStatus, renderedHtml, loadTimeMs,
-      network: { trackingRequests, dataLayer }
+      network: { trackingRequests, dataLayer },
+      accessibility
     }
   } finally {
     await page.close().catch(() => {})

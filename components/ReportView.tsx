@@ -7,7 +7,8 @@ import type { MonthlyReport, KpiValue } from '@/lib/report'
 
 const C = {
   ink: '#0E1A2B', muted: '#5B6B80', line: '#E3E8EF', bg: '#F6F8FB', card: '#FFFFFF',
-  navy: '#0B1F3A', accent: '#C98A00', good: '#0F8A5F', bad: '#C2412D', neutral: '#6B7A90',
+  // Brand colours come from agency settings via CSS variables on the report root
+  navy: 'var(--rv-navy, #0B1F3A)', accent: 'var(--rv-accent, #C98A00)', good: '#0F8A5F', bad: '#C2412D', neutral: '#6B7A90',
   high: '#C2412D', medium: '#D97706', low: '#A3A3A3'
 }
 
@@ -50,7 +51,7 @@ function Bars({ data, label, format }: { data: { label: string; value: number | 
           const last = i === data.length - 1
           return (
             <g key={i}>
-              {d.value != null && <rect x={x} y={h - bh} width={bw * 0.64} height={bh} rx={3} fill={last ? C.navy : '#AFC0D6'} />}
+              {d.value != null && <rect x={x} y={h - bh} width={bw * 0.64} height={bh} rx={3} style={{ fill: last ? C.navy : '#AFC0D6' }} />}
               <text x={x + bw * 0.32} y={h - bh - 6} textAnchor="middle" fontSize="11" fill={C.ink}>{d.value == null ? '' : format(d.value)}</text>
               <text x={x + bw * 0.32} y={h + 16} textAnchor="middle" fontSize="11" fill={C.muted}>{d.label}</text>
             </g>
@@ -90,7 +91,7 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
   if (r.tests.length) headline.push(`${r.tests.length} A/B test${r.tests.length === 1 ? '' : 's'} live or concluded`)
 
   return (
-    <div className="rv-outer" style={{ background: print ? '#fff' : C.bg, color: C.ink, minHeight: '100vh', fontFamily: "'Space Grotesk', system-ui, sans-serif", padding: print ? 0 : '32px 16px' }}>
+    <div className="rv-outer" style={{ ['--rv-navy' as any]: r.branding.primaryColor, ['--rv-accent' as any]: r.branding.accentColor,  background: print ? '#fff' : C.bg, color: C.ink, minHeight: '100vh', fontFamily: "'Space Grotesk', system-ui, sans-serif", padding: print ? 0 : '32px 16px' }}>
       <style>{`
         @media print { .no-print { display: none !important } section { break-inside: auto } }
         .rv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px }
@@ -109,7 +110,7 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
           <div>
             <div style={{ fontSize: 12, letterSpacing: 3, textTransform: 'uppercase', color: C.accent, fontWeight: 700 }}>Conversion Report</div>
             <h1 style={{ fontSize: 32, margin: '6px 0 4px', color: C.navy }}>{r.client.name}</h1>
-            <div style={{ color: C.muted }}>{r.periodLabel} · prepared by Algorithm Agency with Fischer</div>
+            <div style={{ color: C.muted }}>{r.periodLabel} · prepared by {r.branding.agencyName}{r.branding.showFischerName ? ' with Fischer' : ''}</div>
           </div>
           {r.client.logoUrl && <img src={r.client.logoUrl} alt={`${r.client.name} logo`} style={{ maxHeight: 56, maxWidth: 180 }} />}
         </header>
@@ -364,7 +365,7 @@ export function ReportView({ report: r, print }: { report: MonthlyReport; print?
         )}
 
         <footer style={{ marginTop: 24, fontSize: 12, color: C.muted, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-          <span>Algorithm Agency · Fischer CRO</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{r.branding.logoUrl && <img src={r.branding.logoUrl} alt={r.branding.agencyName} style={{ maxHeight: 22 }} />}{r.branding.agencyName}{r.branding.footer ? ` · ${r.branding.footer}` : ''}</span>
           <span>{r.client.contactName ? `Questions? ${r.client.contactName}${r.client.contactEmail ? ` · ${r.client.contactEmail}` : ''}` : `Generated ${r.generatedAt.slice(0, 10)}`}</span>
         </footer>
       </div>
