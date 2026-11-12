@@ -1,5 +1,5 @@
 -- ============================================================
--- Fischer — complete database setup (migrations 0001–0014 combined)
+-- Fischer — complete database setup (migrations 0001–0015 combined)
 -- Paste this whole file into Supabase → SQL Editor → New query → Run.
 -- Create your own login (Authentication → Users) BEFORE running it:
 -- every login that exists at that moment becomes a Fischer admin.
@@ -1046,3 +1046,15 @@ create policy fischer_read on report_emails for select using (fischer_is_team())
 create policy fischer_write on report_emails for all using (fischer_is_writer()) with check (fischer_is_writer());
 create policy fischer_read on site_scans for select using (fischer_is_team());
 create policy fischer_write on site_scans for all using (fischer_is_writer()) with check (fischer_is_writer());
+
+-- ------------------------------------------------------------
+-- 0015_drop_audit_pairs_view.sql
+-- ------------------------------------------------------------
+-- Fischer — remove the unused audit_pairs view.
+-- Run after 0014_branding_emails_a11y_discovery.sql.
+--
+-- Views run with their owner's rights by default, so this view bypassed the
+-- row-level security on `audits`: through Supabase's API any logged-in user
+-- (including client portal logins) could read every client's audits. Nothing
+-- in Fischer uses it (audit comparison queries the audits table directly).
+drop view if exists audit_pairs;
