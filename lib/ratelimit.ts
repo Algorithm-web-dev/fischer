@@ -47,6 +47,12 @@ export async function checkRateLimit(
     return { allowed: true, remaining: 999, resetAt: 0 }
   }
 
-  const { success, remaining, reset } = await limiter.limit(identifier)
-  return { allowed: success, remaining, resetAt: reset }
+  try {
+    const { success, remaining, reset } = await limiter.limit(identifier)
+    return { allowed: success, remaining, resetAt: reset }
+  } catch (err) {
+    // A misconfigured or unreachable Redis must not lock everyone out.
+    console.error('[fischer] Rate limit check failed — allowing request:', err instanceof Error ? err.message : err)
+    return { allowed: true, remaining: 0, resetAt: 0 }
+  }
 }

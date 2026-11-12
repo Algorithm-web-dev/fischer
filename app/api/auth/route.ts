@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { authRateLimit, checkRateLimit } from '@/lib/ratelimit'
+import { envStatus } from '@/lib/env-check'
+import { logError } from '@/lib/errors'
 
 /**
  * Real per-user login via Supabase Auth. Replaces the old shared-password
@@ -11,6 +13,22 @@ import { authRateLimit, checkRateLimit } from '@/lib/ratelimit'
  * or via supabase.auth.admin.createUser from a setup script).
  */
 export async function POST(req: NextRequest) {
+  try {
+    return await signIn(req)
+  } catch (err) {
+    // Turn server crashes into a readable message instead of an empty 500.
+    const env = envStatus()
+    const config = [...env.missing.map(k => `${k} is not set`), ...env.problems]
+    await logError('api:auth', err)
+    return NextResponse.json({
+      error: config.length
+        ? `Fischer isn't fully configured: ${config.join('; ')}. Fix it in Vercel → Settings → Environment Variables, then redeploy.`
+        : 'Sign-in failed on the server. Check /api/health and the Vercel function logs.'
+    }, { status: 500 })
+  }
+}
+
+async function signIn(req: NextRequest) {
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
 
   const { allowed, resetAt } = await checkRateLimit(authRateLimit, ip)

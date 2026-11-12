@@ -20,13 +20,20 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    })
+    let res: Response
+    try {
+      res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      })
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.')
+      setLoading(false)
+      return
+    }
 
-    const data = await res.json()
+    const data = await res.json().catch(() => ({ error: `The server returned an error (${res.status}). Open /api/health to check the setup.` }))
 
     if (res.ok) {
       router.push('/clients')

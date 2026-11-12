@@ -15,6 +15,7 @@ export async function middleware(request: NextRequest) {
     pathname === '/fischer-tracking.js' ||
     pathname === '/api/leads/ingest' ||
     pathname === '/api/kit/config' ||
+    pathname === '/api/health' ||
     pathname.startsWith('/api/cron/')
   ) {
     return NextResponse.next()
@@ -23,8 +24,8 @@ export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request: { headers: request.headers } })
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim(),
+    (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim(),
     {
       cookies: {
         get(name: string) {
