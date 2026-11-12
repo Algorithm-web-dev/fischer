@@ -309,7 +309,7 @@ async function autoScroll(page: Page, maxPx: number) {
  * generic). We record that a banner existed (it IS part of the visitor's first
  * impression) but remove it so it doesn't hide the page in every screenshot.
  */
-async function dismissOverlays(page: Page) {
+export async function dismissOverlays(page: Page) {
   await page.evaluate(`(() => {
     const selectors = ['#onetrust-accept-btn-handler', '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
       '#CybotCookiebotDialogBodyButtonAccept', '.cc-allow', '.cookie-accept', '[data-testid="cookie-accept"]',

@@ -47,6 +47,38 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     updates.test_end_date = new Date().toISOString().slice(0, 10)
   }
 
+  // ---- Live A/B test via the Fischer tracking kit ----
+  if (body.kitSplit !== undefined) {
+    const s = Number(body.kitSplit)
+    if (!(s > 0 && s < 1)) return bad('kitSplit must be between 0 and 1 (e.g. 0.5).')
+    updates.kit_split = s
+  }
+  if (body.kitUrlMatch !== undefined) {
+    const m = String(body.kitUrlMatch || '/').trim()
+    if (!m.startsWith('/') || m.length > 300) return bad('kitUrlMatch must be a path like /quote or a prefix like /products/*.')
+    updates.kit_url_match = m
+  }
+  if (body.kitDevice !== undefined) {
+    if (!['all', 'mobile', 'desktop'].includes(body.kitDevice)) return bad('kitDevice must be all, mobile or desktop.')
+    updates.kit_device = body.kitDevice
+  }
+  if (body.kitLive === true && !test.kit_live) {
+    if (!test.variant_ops?.length) return bad('Generate the variant first (Build variant).')
+    const { data: other } = await supabase.from('test_briefs').select('id, hypothesis_name')
+      .eq('client_id', test.client_id).eq('kit_live', true).neq('id', test.id).limit(1)
+    if (other?.length) return bad(`"${other[0].hypothesis_name}" is already live for this client — one live kit test per site keeps GA4 results unambiguous.`, 409)
+    updates.kit_live = true
+    if (test.status !== 'running') {
+      updates.status = 'running'
+      if (!test.test_start_date) updates.test_start_date = new Date().toISOString().slice(0, 10)
+    }
+    // The kit writes the visitor's arm to the GA4 user property "fischer_exp"
+    updates.ga4_dimension = 'customUser:fischer_exp'
+    updates.ga4_control_value = `${test.kit_key}-control`
+    updates.ga4_variant_value = `${test.kit_key}-variant`
+  }
+  if (body.kitLive === false || updates.status === 'completed' || updates.status === 'abandoned') updates.kit_live = false
+
   const merged = { ...test, ...updates }
   const hasResults = ['control_visitors', 'control_conversions', 'variant_visitors', 'variant_conversions']
     .some(k => k in updates)
@@ -70,6 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
+  if (Object.keys(updates).length === 0) return NextResponse.json({ test })
   const { data: saved, error } = await supabase.from('test_briefs').update(updates).eq('id', params.id).select().single()
   if (error) return bad(error.message, 500)
   await logActivity(supabase, user, 'test.update', { entityType: 'test', entityId: params.id, clientId: saved.client_id, details: { fields: Object.keys(updates) } })

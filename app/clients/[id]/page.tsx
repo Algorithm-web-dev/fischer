@@ -8,6 +8,7 @@ import { Guardrails } from '@/components/tabs/Guardrails'
 import { Competitors } from '@/components/tabs/Competitors'
 import { ClientAccess } from '@/components/ClientAccess'
 import { GoogleConnect } from '@/components/GoogleConnect'
+import { BeforeAfter } from '@/components/Mockups'
 
 type Tab = 'overview' | 'leaks' | 'leads' | 'pages' | 'backlog' | 'changes' | 'tests' | 'guardrails' | 'competitors' | 'reports' | 'settings'
 
@@ -539,6 +540,44 @@ function Tests({ clientId }: { clientId: string }) {
   )
 }
 
+/** Build the variant as page edits, preview it, and run it live through the tracking kit. */
+function KitTest({ test: t, onSave }: { test: any; onSave: (json: unknown) => void }) {
+  const [mockup, setMockup] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [cfg, setCfg] = useState({ kitSplit: t.kit_split ?? 0.5, kitUrlMatch: t.kit_url_match ?? '', kitDevice: t.kit_device ?? 'all' })
+  useEffect(() => { api(`/api/mockups?testId=${t.id}`).then(d => setMockup(d.mockups[0] ?? null)).catch(() => {}) }, [t.id])
+  return (
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: 12, margin: '10px 0' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 13, flex: '1 1 200px' }}>Run with the Fischer tracking kit</strong>
+        {t.kit_live ? <Pill color={T.good}>live · {t.kit_key}</Pill> : t.variant_ops?.length ? <Pill>variant ready</Pill> : null}
+        <Button kind="ghost" disabled={busy} onClick={async () => {
+          setBusy(true); setError('')
+          try { const r = await api(`/api/tests/${t.id}/variant`, { method: 'POST' }); setMockup(r.mockup); if (r.notPossible) setError(r.notPossible); onSave({}) }
+          catch (e) { setError(e instanceof Error ? e.message : 'Failed') }
+          finally { setBusy(false) }
+        }}>{busy ? 'Building variant… (~1 min)' : t.variant_ops?.length ? 'Rebuild variant' : 'Build variant'}</Button>
+      </div>
+      <p style={{ fontSize: 12, color: T.muted, margin: '6px 0' }}>Fischer turns the brief into page edits and previews them. Going live needs the tracking kit on the site with <code>abTests: true</code>. Visitors are split, the variant is applied in their browser, and their group goes to GA4 as <code>fischer_exp</code> (register it as a user-scoped custom dimension). Results then come in with “Sync from GA4”. Only one live kit test per site.</p>
+      {error && <div style={{ fontSize: 12, color: T.warn }}>{error}</div>}
+      <BeforeAfter m={mockup} />
+      {t.variant_ops?.length > 0 && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap', marginTop: 10 }}>
+          <Field label="Variant share"><select style={{ ...inputStyle, width: 110 }} value={cfg.kitSplit} onChange={e => setCfg({ ...cfg, kitSplit: Number(e.target.value) })}>{[0.1, 0.25, 0.5].map(s => <option key={s} value={s}>{s * 100}%</option>)}</select></Field>
+          <Field label="Pages (path or prefix*)"><input style={{ ...inputStyle, width: 200 }} value={cfg.kitUrlMatch} onChange={e => setCfg({ ...cfg, kitUrlMatch: e.target.value })} /></Field>
+          <Field label="Devices"><select style={{ ...inputStyle, width: 120 }} value={cfg.kitDevice} onChange={e => setCfg({ ...cfg, kitDevice: e.target.value })}><option value="all">all</option><option value="mobile">mobile</option><option value="desktop">desktop</option></select></Field>
+          <div style={{ marginBottom: 14, display: 'flex', gap: 6 }}>
+            <Button kind="ghost" onClick={() => onSave(cfg)}>Save</Button>
+            {t.kit_live ? <Button kind="danger" onClick={() => onSave({ kitLive: false })}>Stop test</Button>
+              : <Button onClick={() => { if (confirm('Start this test on the live site now?')) onSave({ ...cfg, kitLive: true }) }}>Go live</Button>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TestDetail({ test: t, onSave, onSync }: { test: any; onSave: (json: unknown) => void; onSync: () => void }) {
   const [r, setR] = useState({
     controlVisitors: t.control_visitors ?? '', controlConversions: t.control_conversions ?? '',
@@ -561,6 +600,7 @@ function TestDetail({ test: t, onSave, onSync }: { test: any; onSave: (json: unk
         {b.qaChecklist?.length > 0 && <p><strong>QA:</strong> {b.qaChecklist.join(' · ')}</p>}
       </div>}
       {plan && <p style={{ fontSize: 13, color: plan.feasible ? T.good : T.warn }}>Plan: {plan.note}</p>}
+      <KitTest test={t} onSave={onSave} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0 12px' }}>
         <Field label="Start date"><input type="date" style={inputStyle} value={r.testStartDate} onChange={num('testStartDate')} /></Field>
         <Field label="End date"><input type="date" style={inputStyle} value={r.testEndDate} onChange={num('testEndDate')} /></Field>

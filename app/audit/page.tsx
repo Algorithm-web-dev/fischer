@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
 import type { AuditResult, FrictionPoint } from '@/lib/claude'
+import { MockupButton } from '@/components/Mockups'
 
 const SEV = { high: T.bad, medium: T.warn, low: '#FFD700' }
 const STATUS: Record<string, string> = { resolved: T.good, improved: T.good, still_present: T.warn, worse: T.bad, cannot_verify: T.muted }
@@ -121,8 +122,11 @@ function AuditView({ id }: { id: string }) {
   const [showUnverified, setShowUnverified] = useState(false)
   const [briefBusy, setBriefBusy] = useState<number | null>(null)
   const [promoted, setPromoted] = useState(false)
+  const [mockups, setMockups] = useState<any[]>([])
 
   useEffect(() => { api(`/api/audits/${id}`).then(d => setAudit(d.audit)).catch(e => setError(e.message)) }, [id])
+  useEffect(() => { api(`/api/mockups?auditId=${id}`).then(d => setMockups(d.mockups)).catch(() => {}) }, [id])
+  const mockupFor = (kind: string, i: number) => mockups.find(m => m.source === kind && m.source_index === i)
 
   if (error) return <Page title="Audit"><p style={{ color: T.bad }}>{error}</p></Page>
   if (!audit) return <Page title="Audit"><p style={{ color: T.muted }}>Loading…</p></Page>
@@ -220,7 +224,7 @@ function AuditView({ id }: { id: string }) {
           {audit.client_id && <Button kind="ghost" disabled={promoted} onClick={async () => { await api('/api/backlog/from-audit', { method: 'POST', json: { auditId: id, clientId: audit.client_id } }); setPromoted(true) }}>{promoted ? 'Added to backlog' : 'Add all to backlog'}</Button>}
         </div>
         {r.frictionPoints.length === 0 && <p style={{ color: T.muted }}>No evidence-backed problems found.</p>}
-        {r.frictionPoints.map((f, i) => <Finding key={i} f={f} />)}
+        {r.frictionPoints.map((f, i) => <div key={i}><Finding f={f} />{audit.client_id && <div style={{ margin: '-4px 0 12px 15px' }}><MockupButton key={mockupFor('finding', i)?.id ?? `f${i}`} auditId={id} kind="finding" index={i} existing={mockupFor('finding', i)} /></div>}</div>)}
         {r.unverifiedFindings?.length > 0 && (
           <div style={{ marginTop: 12 }}>
             <button onClick={() => setShowUnverified(s => !s)} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
@@ -282,6 +286,7 @@ function AuditView({ id }: { id: string }) {
             <div style={{ fontSize: 13, color: T.muted }}><strong>Variant:</strong> {h.variant}</div>
             <div style={{ fontSize: 13, color: T.muted }}><strong>Metric:</strong> {h.primaryMetric} · expected +{h.expectedLiftPct}%</div>
             {h.plan && <div style={{ fontSize: 13, color: h.plan.feasible ? T.good : T.warn, marginTop: 4 }}>{h.plan.note}</div>}
+            {audit.client_id && <div style={{ marginTop: 8 }}><MockupButton key={mockupFor('hypothesis', i)?.id ?? `h${i}`} auditId={id} kind="hypothesis" index={i} existing={mockupFor('hypothesis', i)} /></div>}
           </div>))}
       </div>
 

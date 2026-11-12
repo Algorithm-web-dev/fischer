@@ -14,6 +14,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/report/') ||
     pathname === '/fischer-tracking.js' ||
     pathname === '/api/leads/ingest' ||
+    pathname === '/api/kit/config' ||
     pathname.startsWith('/api/cron/')
   ) {
     return NextResponse.next()
