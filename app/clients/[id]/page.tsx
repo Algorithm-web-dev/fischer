@@ -401,8 +401,11 @@ function Pages({ client, trends, reload }: { client: any; trends: any; reload: (
   async function runNow(p: any) {
     setBusy(p.id)
     try {
-      await api('/api/audit', { method: 'POST', json: { clientId: client.id, pageUrl: p.page_url, pageType: p.page_type, businessGoal: p.business_goal, async: true } })
-      setMsg('Audit queued — it starts within a minute and takes 1–4 minutes. It will appear under "All audit runs".')
+      setMsg('Running audit — capturing the page on desktop and mobile, then analysing. This takes 1–4 minutes; keep this tab open.')
+      const r = await api('/api/audit', { method: 'POST', json: { clientId: client.id, pageUrl: p.page_url, pageType: p.page_type, businessGoal: p.business_goal, async: true } })
+      if (r.status === 'queued') setMsg('Audit queued — it starts within a minute and takes 1–4 minutes. It will appear under "All audit runs".')
+      else if (r.status === 'needs_manual_input') setMsg(`Capture incomplete: ${Object.values(r.reasons ?? {}).join(' · ')} — open the audit under "All audit runs" to supply the missing piece.`)
+      else { setMsg(''); window.location.href = `/audit?view=${r.auditId}` }
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Audit failed') }
     finally { setBusy(null); load() }
   }

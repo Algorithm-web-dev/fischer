@@ -1,28 +1,5 @@
 {
   "crons": [
-    {
-      "path": "/api/cron/guardrails",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/clarity-daily",
-      "schedule": "15 2 * * *"
-    },
-    {
-      "path": "/api/cron/monthly",
-      "schedule": "40 * * * *"
-    },
-    {
-      "path": "/api/cron/journeys",
-      "schedule": "20 3 * * *"
-    },
-    {
-      "path": "/api/cron/worker",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/report-emails",
-      "schedule": "10 7 * * *"
-    }
+    { "path": "/api/cron/daily", "schedule": "40 3 * * *" }
   ]
 }

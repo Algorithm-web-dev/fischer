@@ -85,8 +85,20 @@ npm run smoke -- --url=https://a-client-page.co.za/ --client=<client id> --audit
 ```
 
 ### 4. Hosting (Vercel)
-- **Pro plan needed.** Audits run up to 300s (full-page capture at two viewports + model analysis), and the monthly job runs hourly. Hobby caps functions at 60s and crons at once a day.
-- Cron schedules are in `vercel.json`: **worker (every minute)**, snapshots + leak maps + queuing re-audits (hourly), Clarity history (daily 02:15 UTC), journey checks (daily 03:20 UTC, each page weekly), guardrails (daily), report emails (daily 07:10 UTC, each client once a month on its send day).
+Fischer runs on two setups:
+
+| | **Hobby (free) — current setup** | **Pro — when clients use it** |
+|---|---|---|
+| Audits you start | Run immediately (1–4 min, keep the tab open) | Queued; a worker picks them up within a minute |
+| Scheduled jobs | One daily cron (`/api/cron/daily`) starts all of them: snapshots, leak maps, re-audit queue, Clarity history, journeys, guardrails, report emails | Same, plus the per-minute worker |
+| Scheduled re-audits | About one per day | Many in parallel |
+| Needs | **Fluid compute** on (Project → Settings → Functions) so audits can run up to 300s | — |
+
+**Switching to Pro:**
+1. Upgrade the Vercel team.
+2. Add `FISCHER_BACKGROUND_WORKER=true` in Vercel.
+3. Add the worker to `vercel.json` (`{ "path": "/api/cron/worker", "schedule": "* * * * *" }`).
+4. Optionally add `{ "path": "/api/cron/monthly", "schedule": "40 * * * *" }` for hourly snapshot and queue runs.
 - **Google OAuth:** in Google Cloud, enable the Analytics Data, Analytics Admin, Search Console and Google Ads APIs. Create a Web OAuth client with redirect URI `{FISCHER_PUBLIC_URL}/api/google/callback`.
 - If Vercel Deployment Protection is on, PDF export needs `FISCHER_PUBLIC_URL` to point at a URL the function can reach (e.g. your production domain).
 
