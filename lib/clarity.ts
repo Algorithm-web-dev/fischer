@@ -1,241 +1,299 @@
 /**
- * Microsoft Clarity Data Export API integration.
+ * Microsoft Clarity Data Export API.
  *
- * Pulls real user behaviour signals — rage clicks, dead clicks, excessive
- * scroll, engagement time — per page URL. This is the qualitative layer
- * Fischer was missing: the scraper sees the page structure, PageSpeed sees
- * performance, but only Clarity sees how real humans actually interact.
+ * Endpoint: GET https://www.clarity.ms/export-data/api/v1/project-live-insights
+ *   ?numOfDays=1|2|3 &dimension1=URL   (Authorization: Bearer <token>)
  *
- * API limits: 10 requests/day per project, max 3 days per request.
- * Fine for CRO retainer volume (a few audits per client per month).
+ * The response is an ARRAY of metric objects, one per metric, each holding an
+ * `information` array broken down by the requested dimension:
  *
- * Setup per client:
- *   1. In Clarity → Settings → Data Export → Generate new API token
- *   2. Store the token + project ID in the clients table
- *   3. The service account needs no extra permissions — the token is scoped
+ *   [
+ *     { "metricName": "Traffic", "information": [
+ *         { "totalSessionCount": "9554", "totalBotSessionCount": "83", "distantUserCount": "212",
+ *           "PagesPerSessionPercentage": 1.03, "Url": "https://site.com/page" }, ... ] },
+ *     { "metricName": "RageClickCount", "information": [
+ *         { "sessionsCount": "120", "sessionsWithMetricPercentage": 3.2,
+ *           "sessionsWithoutMetricPercentage": 96.8, "pagesViews": "...", "subTotal": "...",
+ *           "Url": "..." }, ... ] },
+ *     { "metricName": "ScrollDepth", "information": [{ "averageScrollDepth": 54.1, "Url": "..." }] },
+ *     { "metricName": "EngagementTime", "information": [{ "totalTime": "..", "activeTime": "..", "Url": "..." }] },
+ *     ...
+ *   ]
+ *
+ * The previous implementation looked for `data.results` / `data.data` (which
+ * don't exist), never matched a row, and silently returned a "successful"
+ * result full of zeros — so every audit told the model "0% rage clicks".
+ *
+ * Limits: 10 requests per project per day, max 3 days per request. That's why
+ * the daily cron (app/api/cron/clarity-daily) stores one day at a time in
+ * `clarity_daily`, and audits/reports aggregate from that history rather than
+ * calling the API live every time.
  */
 
+const ENDPOINT = 'https://www.clarity.ms/export-data/api/v1/project-live-insights'
+
+/** Frustration/behaviour metrics for one URL (or a whole site). */
 export interface ClarityPageData {
   url: string
   totalSessions: number
-  rageClickCount: number
-  deadClickCount: number
-  excessiveScrollCount: number
-  quickbackClickCount: number
-  errorClickCount: number
-  scriptErrorCount: number
-  avgEngagementTime: number    // seconds
-  avgScrollDepth: number       // percentage
-  rageClickRate: number        // rage clicks as % of total sessions
-  deadClickRate: number        // dead clicks as % of total sessions
+  botSessions: number
+  pagesPerSession: number
+  rageClickSessions: number
+  rageClickRate: number        // % of sessions with at least one rage click
+  deadClickSessions: number
+  deadClickRate: number
+  excessiveScrollSessions: number
+  excessiveScrollRate: number
+  quickbackSessions: number
+  quickbackRate: number
+  errorClickSessions: number
+  errorClickRate: number
+  scriptErrorSessions: number
+  scriptErrorRate: number
+  avgScrollDepth: number       // %
+  avgEngagementTime: number    // seconds (active time per session)
 }
 
 export interface ClarityResult {
   success: boolean
   data?: ClarityPageData
-  rawMetrics?: Record<string, any>
+  isPageLevel?: boolean        // false = page not found, site-wide numbers used instead
+  days?: number
+  source?: 'live' | 'stored'
   error?: string
 }
 
-/**
- * Fetches the last 3 days of Clarity dashboard metrics for a specific page,
- * broken down by URL dimension so we can isolate the page being audited.
- */
-export async function fetchClarityData(
-  projectId: string,
-  apiToken: string,
-  pageUrl: string
-): Promise<ClarityResult> {
-  const endpoint = 'https://www.clarity.ms/export-data/api/v1/project-live-insights'
+/** One day's export, as stored in clarity_daily.data */
+export interface ClarityDaily {
+  site: ClarityPageData
+  pages: ClarityPageData[]
+}
 
+type Metric = { metricName: string; information: Record<string, unknown>[] }
+
+const FRUSTRATION_KEYS: Record<string, keyof ClarityPageData> = {
+  RageClickCount: 'rageClickSessions',
+  DeadClickCount: 'deadClickSessions',
+  ExcessiveScroll: 'excessiveScrollSessions',
+  QuickbackClick: 'quickbackSessions',
+  ErrorClickCount: 'errorClickSessions',
+  ScriptErrorCount: 'scriptErrorSessions'
+}
+
+const RATE_KEYS: Record<string, keyof ClarityPageData> = {
+  RageClickCount: 'rageClickRate',
+  DeadClickCount: 'deadClickRate',
+  ExcessiveScroll: 'excessiveScrollRate',
+  QuickbackClick: 'quickbackRate',
+  ErrorClickCount: 'errorClickRate',
+  ScriptErrorCount: 'scriptErrorRate'
+}
+
+export async function fetchClarityExport(
+  apiToken: string,
+  numOfDays: 1 | 2 | 3 = 1
+): Promise<{ success: true; metrics: Metric[] } | { success: false; error: string }> {
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
-
-    // Pull 3 days of data broken down by URL — this gives us per-page metrics
-    const res = await fetch(
-      `${endpoint}?numOfDays=3&dimension1=URL`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiToken}`,
-          'Content-Type': 'application/json'
-        },
-        signal: controller.signal
-      }
-    )
+    const timeout = setTimeout(() => controller.abort(), 20000)
+    const res = await fetch(`${ENDPOINT}?numOfDays=${numOfDays}&dimension1=URL`, {
+      headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      signal: controller.signal
+    })
     clearTimeout(timeout)
-
     if (!res.ok) {
       const body = await res.text()
-      return {
-        success: false,
-        error: `Clarity API returned ${res.status}: ${body.slice(0, 300)}`
-      }
+      const hint = res.status === 429 ? ' (daily limit of 10 requests per project reached)'
+        : res.status === 401 || res.status === 403 ? ' (token invalid or lacks Data Export access)' : ''
+      return { success: false, error: `Clarity API returned ${res.status}${hint}: ${body.slice(0, 200)}` }
     }
-
-    const data = await res.json()
-
-    // The API returns aggregated metrics — we need to find the row(s)
-    // matching our target page URL. The URL dimension value can be a
-    // full URL or a path, depending on Clarity's normalisation.
-    const targetPath = extractPath(pageUrl)
-    const allRows = data?.results || data?.data || []
-
-    // Find metrics for our specific page
-    const pageMetrics = findPageMetrics(allRows, pageUrl, targetPath)
-
-    if (!pageMetrics) {
-      // No data for this specific page — Clarity may not have enough
-      // sessions yet, or the URL isn't tracked. Return what we have
-      // at the project level as a fallback.
-      return {
-        success: true,
-        data: buildProjectLevelData(data, pageUrl),
-        rawMetrics: data
-      }
+    const json = await res.json()
+    if (!Array.isArray(json)) {
+      return { success: false, error: 'Unexpected Clarity response shape (expected an array of metrics).' }
     }
-
-    return {
-      success: true,
-      data: pageMetrics,
-      rawMetrics: data
-    }
+    return { success: true, metrics: json as Metric[] }
   } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Unknown Clarity API error'
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown Clarity API error' }
+  }
+}
+
+/** Turns the raw export into per-URL rows plus site-wide totals. Pure — unit tested. */
+export function parseClarityExport(metrics: Metric[]): ClarityDaily {
+  const rows = new Map<string, ClarityPageData & { _scrollW: number; _engW: number }>()
+  const get = (url: string) => {
+    let r = rows.get(url)
+    if (!r) {
+      r = { ...emptyPage(url), _scrollW: 0, _engW: 0 }
+      rows.set(url, r)
+    }
+    return r
+  }
+
+  const traffic = metrics.find(m => m.metricName === 'Traffic')
+  for (const info of traffic?.information ?? []) {
+    const url = urlOf(info)
+    if (!url) continue
+    const r = get(url)
+    r.totalSessions += num(info.totalSessionCount)
+    r.botSessions += num(info.totalBotSessionCount)
+    r.pagesPerSession = num(info.PagesPerSessionPercentage) || r.pagesPerSession
+  }
+
+  for (const m of metrics) {
+    const countKey = FRUSTRATION_KEYS[m.metricName]
+    const rateKey = RATE_KEYS[m.metricName]
+    for (const info of m.information ?? []) {
+      const url = urlOf(info)
+      if (!url) continue
+      const r = get(url)
+      if (countKey) {
+        ;(r[countKey] as number) += num(info.sessionsCount)
+        ;(r[rateKey] as number) = num(info.sessionsWithMetricPercentage)
+      } else if (m.metricName === 'ScrollDepth') {
+        r.avgScrollDepth = num(info.averageScrollDepth)
+      } else if (m.metricName === 'EngagementTime') {
+        r.avgEngagementTime = num(info.activeTime) || num(info.totalTime)
+      }
     }
   }
-}
 
-/**
- * Extract just the pathname from a URL for fuzzy matching against Clarity's
- * URL dimension values, which may or may not include the protocol/domain.
- */
-function extractPath(url: string): string {
-  try {
-    return new URL(url).pathname.replace(/\/$/, '') || '/'
-  } catch {
-    return url
-  }
-}
-
-/**
- * Search through Clarity's response data to find metrics for our target page.
- * The response structure varies — handle both flat metrics and dimension-broken arrays.
- */
-function findPageMetrics(
-  rows: any[],
-  fullUrl: string,
-  targetPath: string
-): ClarityPageData | null {
-  if (!Array.isArray(rows) || rows.length === 0) return null
-
-  for (const row of rows) {
-    const rowUrl = (row.URL || row.url || row.dimension1Value || '').toString()
-    const rowPath = extractPath(rowUrl)
-
-    // Match on full URL, path only, or path with trailing slash variation
-    if (
-      rowUrl === fullUrl ||
-      rowPath === targetPath ||
-      rowUrl.includes(targetPath)
-    ) {
-      return extractMetricsFromRow(row, fullUrl)
+  const pages = Array.from(rows.values()).map(({ _scrollW, _engW, ...p }) => p)
+  // Where Clarity gave counts but no percentage, derive the rate from sessions.
+  for (const p of pages) {
+    for (const k of Object.keys(FRUSTRATION_KEYS)) {
+      const c = FRUSTRATION_KEYS[k], rk = RATE_KEYS[k]
+      if (!(p[rk] as number) && p.totalSessions > 0 && (p[c] as number) > 0) {
+        ;(p[rk] as number) = round1(((p[c] as number) / p.totalSessions) * 100)
+      }
     }
   }
-
-  return null
+  pages.sort((a, b) => b.totalSessions - a.totalSessions)
+  return { site: aggregatePages(pages, 'site-wide'), pages }
 }
 
 /**
- * Extract typed metrics from a Clarity API response row.
+ * Sums several rows (several URLs, or the same URL over several days) into one,
+ * session-weighting the percentages so a 2-session page can't dominate.
  */
-function extractMetricsFromRow(row: any, url: string): ClarityPageData {
-  const sessions = toNum(row.Traffic || row.totalSessions || row.sessions || 0)
-  const rageClicks = toNum(row.RageClickCount || row.rageClickCount || 0)
-  const deadClicks = toNum(row.DeadClickCount || row.deadClickCount || 0)
-  const excessiveScroll = toNum(row.ExcessiveScroll || row.excessiveScrollCount || 0)
-  const quickback = toNum(row.QuickbackClick || row.quickbackClickCount || 0)
-  const errorClicks = toNum(row.ErrorClickCount || row.errorClickCount || 0)
-  const scriptErrors = toNum(row.ScriptErrorCount || row.scriptErrorCount || 0)
-  const engagementTime = toNum(row.EngagementTime || row.avgEngagementTime || 0)
-  const scrollDepth = toNum(row.ScrollDepth || row.avgScrollDepth || 0)
-
-  return {
-    url,
-    totalSessions: sessions,
-    rageClickCount: rageClicks,
-    deadClickCount: deadClicks,
-    excessiveScrollCount: excessiveScroll,
-    quickbackClickCount: quickback,
-    errorClickCount: errorClicks,
-    scriptErrorCount: scriptErrors,
-    avgEngagementTime: engagementTime,
-    avgScrollDepth: scrollDepth,
-    rageClickRate: sessions > 0 ? Math.round((rageClicks / sessions) * 100 * 10) / 10 : 0,
-    deadClickRate: sessions > 0 ? Math.round((deadClicks / sessions) * 100 * 10) / 10 : 0
+export function aggregatePages(pages: ClarityPageData[], url: string): ClarityPageData {
+  const out = emptyPage(url)
+  if (pages.length === 0) return out
+  let sessions = 0
+  const weighted: Partial<Record<keyof ClarityPageData, number>> = {}
+  for (const p of pages) {
+    const w = p.totalSessions || 0
+    sessions += w
+    out.botSessions += p.botSessions
+    for (const k of Object.values(FRUSTRATION_KEYS)) (out[k] as number) += p[k] as number
+    for (const k of [...Object.values(RATE_KEYS), 'avgScrollDepth', 'avgEngagementTime', 'pagesPerSession'] as (keyof ClarityPageData)[]) {
+      weighted[k] = (weighted[k] ?? 0) + (p[k] as number) * w
+    }
   }
-}
-
-/**
- * Fallback: if we can't find page-specific data, return project-level
- * aggregates. Better than nothing — the prompt will note it's site-wide.
- */
-function buildProjectLevelData(data: any, url: string): ClarityPageData {
-  // Project-level metrics are often in the top-level response
-  return {
-    url,
-    totalSessions: toNum(data?.Traffic || data?.totalSessions || 0),
-    rageClickCount: toNum(data?.RageClickCount || 0),
-    deadClickCount: toNum(data?.DeadClickCount || 0),
-    excessiveScrollCount: toNum(data?.ExcessiveScroll || 0),
-    quickbackClickCount: toNum(data?.QuickbackClick || 0),
-    errorClickCount: toNum(data?.ErrorClickCount || 0),
-    scriptErrorCount: toNum(data?.ScriptErrorCount || 0),
-    avgEngagementTime: toNum(data?.EngagementTime || 0),
-    avgScrollDepth: toNum(data?.ScrollDepth || 0),
-    rageClickRate: 0,
-    deadClickRate: 0
+  out.totalSessions = sessions
+  for (const [k, v] of Object.entries(weighted)) {
+    ;(out as any)[k] = sessions > 0 ? round1(v! / sessions) : 0
   }
+  return out
 }
 
-function toNum(val: any): number {
-  const n = Number(val)
-  return isNaN(n) ? 0 : n
+/** Picks the rows for one page out of a parsed export (ignores query strings, trailing slashes, protocol). */
+export function matchPage(pages: ClarityPageData[], pageUrl: string): ClarityPageData[] {
+  const target = normaliseUrl(pageUrl)
+  return pages.filter(p => normaliseUrl(p.url) === target)
 }
 
-/**
- * Formats Clarity data into a prompt section for Claude.
- * This is what makes Fischer's recommendations specific: instead of
- * guessing "users might find this confusing," it can say "35% rage
- * click rate on this element — users ARE finding it confusing."
- */
-export function formatClarityForPrompt(data: ClarityPageData, isPageLevel: boolean): string {
-  const scope = isPageLevel ? 'this specific page' : 'site-wide (page-level data not available — treat as directional)'
+/** Live pull for one page — used only when no stored daily history exists yet. */
+export async function fetchClarityData(apiToken: string, pageUrl: string): Promise<ClarityResult> {
+  const res = await fetchClarityExport(apiToken, 3)
+  if (!res.success) return { success: false, error: res.error }
+  const parsed = parseClarityExport(res.metrics)
+  const matched = matchPage(parsed.pages, pageUrl)
+  if (matched.length > 0) {
+    return { success: true, data: aggregatePages(matched, pageUrl), isPageLevel: true, days: 3, source: 'live' }
+  }
+  return { success: true, data: { ...parsed.site, url: pageUrl }, isPageLevel: false, days: 3, source: 'live' }
+}
 
-  let section = `**REAL USER BEHAVIOUR (Microsoft Clarity, last 72 hours, ${scope}):**
-- Total sessions: ${data.totalSessions.toLocaleString()}
-- Rage clicks: ${data.rageClickCount} (${data.rageClickRate}% of sessions) — users clicking repeatedly on elements that don't respond as expected
-- Dead clicks: ${data.deadClickCount} (${data.deadClickRate}% of sessions) — users clicking elements that do nothing
-- Excessive scrolling: ${data.excessiveScrollCount} sessions — users hunting for content, likely can't find what they need
-- Quick-back clicks: ${data.quickbackClickCount} — users immediately returning to the previous page (strong intent mismatch signal)
-- JavaScript errors: ${data.scriptErrorCount} — broken functionality users are hitting
-- Average engagement time: ${Math.round(data.avgEngagementTime)}s
-- Average scroll depth: ${Math.round(data.avgScrollDepth)}%`
+/** Aggregates stored daily exports for one page (or the site when pageUrl omitted). */
+export function aggregateStoredDays(days: ClarityDaily[], pageUrl?: string): ClarityResult {
+  if (days.length === 0) return { success: false, error: 'No stored Clarity data.' }
+  if (!pageUrl) {
+    return { success: true, data: aggregatePages(days.map(d => d.site), 'site-wide'), isPageLevel: false, days: days.length, source: 'stored' }
+  }
+  const matched = days.flatMap(d => matchPage(d.pages ?? [], pageUrl))
+  if (matched.length > 0) {
+    return { success: true, data: aggregatePages(matched, pageUrl), isPageLevel: true, days: days.length, source: 'stored' }
+  }
+  return { success: true, data: { ...aggregatePages(days.map(d => d.site), pageUrl) }, isPageLevel: false, days: days.length, source: 'stored' }
+}
 
-  // Add diagnostic interpretation
+export function formatClarityForPrompt(result: ClarityResult): string {
+  const data = result.data!
+  const scope = result.isPageLevel
+    ? 'this specific page'
+    : 'SITE-WIDE (no page-level rows for this URL — treat as directional, do not attribute to this page specifically)'
+  const period = `${result.days} day${result.days === 1 ? '' : 's'}`
+
+  if (data.totalSessions === 0) {
+    return `**MICROSOFT CLARITY:** connected, but 0 sessions were recorded for ${scope} in the last ${period}. Do not cite any Clarity metrics.`
+  }
+
+  let section = `**REAL USER BEHAVIOUR (Microsoft Clarity, last ${period}, ${scope}):**
+- Sessions: ${data.totalSessions.toLocaleString()} (pages per session: ${data.pagesPerSession || 'n/a'})
+- Rage clicks: ${data.rageClickRate}% of sessions (${data.rageClickSessions} sessions)
+- Dead clicks: ${data.deadClickRate}% of sessions (${data.deadClickSessions} sessions)
+- Excessive scrolling: ${data.excessiveScrollRate}% of sessions
+- Quick-backs (left almost immediately): ${data.quickbackRate}% of sessions
+- Error clicks: ${data.errorClickRate}% · JavaScript errors: ${data.scriptErrorRate}% of sessions
+- Average scroll depth: ${Math.round(data.avgScrollDepth)}%
+- Average active engagement time: ${Math.round(data.avgEngagementTime)}s`
+
   const alerts: string[] = []
-  if (data.rageClickRate > 5) alerts.push(`CRITICAL: ${data.rageClickRate}% rage click rate is far above the <3% benchmark — a UI element is broken or misleading`)
-  if (data.deadClickRate > 10) alerts.push(`HIGH: ${data.deadClickRate}% dead click rate — users expect interactivity where there is none`)
-  if (data.quickbackClickCount > data.totalSessions * 0.15) alerts.push(`HIGH: Quick-back rate suggests intent mismatch — visitors aren't finding what they expected`)
-  if (data.avgScrollDepth < 40) alerts.push(`MEDIUM: Only ${Math.round(data.avgScrollDepth)}% average scroll depth — most visitors never see below-the-fold content`)
-  if (data.scriptErrorCount > 10) alerts.push(`HIGH: ${data.scriptErrorCount} JS errors in 72 hours — functionality is breaking for real users`)
-
-  if (alerts.length > 0) {
-    section += `\n\n**CLARITY ALERT — these MUST appear in your friction points:**\n${alerts.map(a => `- ${a}`).join('\n')}`
+  if (data.totalSessions >= 100) {
+    if (data.rageClickRate > 3) alerts.push(`${data.rageClickRate}% rage-click rate (benchmark < 3%) — something looks clickable or broken`)
+    if (data.deadClickRate > 10) alerts.push(`${data.deadClickRate}% dead-click rate — visitors click things that do nothing`)
+    if (data.quickbackRate > 15) alerts.push(`${data.quickbackRate}% quick-back rate — visitors don't find what they expected`)
+    if (data.scriptErrorRate > 5) alerts.push(`${data.scriptErrorRate}% of sessions hit a JavaScript error`)
+    if (data.avgScrollDepth > 0 && data.avgScrollDepth < 40) alerts.push(`Only ${Math.round(data.avgScrollDepth)}% average scroll depth — most visitors never see the lower page`)
+  } else {
+    section += `\n(Low sample: under 100 sessions — treat Clarity rates as weak evidence.)`
   }
-
+  if (alerts.length > 0) {
+    section += `\n\n**CLARITY SIGNALS above benchmark (strong evidence — address each one, tying it to the element in the screenshots where you can):**\n${alerts.map(a => `- ${a}`).join('\n')}`
+  }
   return section
+}
+
+export function normaliseUrl(u: string): string {
+  try {
+    const url = new URL(u)
+    const path = url.pathname.replace(/\/+$/, '') || '/'
+    return `${url.hostname.replace(/^www\./, '')}${path}`.toLowerCase()
+  } catch {
+    return u.replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase() || '/'
+  }
+}
+
+function emptyPage(url: string): ClarityPageData {
+  return {
+    url, totalSessions: 0, botSessions: 0, pagesPerSession: 0,
+    rageClickSessions: 0, rageClickRate: 0, deadClickSessions: 0, deadClickRate: 0,
+    excessiveScrollSessions: 0, excessiveScrollRate: 0, quickbackSessions: 0, quickbackRate: 0,
+    errorClickSessions: 0, errorClickRate: 0, scriptErrorSessions: 0, scriptErrorRate: 0,
+    avgScrollDepth: 0, avgEngagementTime: 0
+  }
+}
+
+function urlOf(info: Record<string, unknown>): string | null {
+  const v = info.Url ?? info.URL ?? info.url
+  return typeof v === 'string' && v ? v : null
+}
+
+function num(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function round1(n: number) {
+  return Math.round(n * 10) / 10
 }

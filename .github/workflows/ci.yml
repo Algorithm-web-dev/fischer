@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit -p .
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci
+
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply all migrations twice (checks order and idempotency)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f supabase/ci/supabase-stubs.sql
+          for f in supabase/migrations/*.sql; do echo "== $f"; psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"; done
+          for f in supabase/migrations/000[4-9]*.sql supabase/migrations/00[1-9][0-9]*.sql; do [ -f "$f" ] && psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q -f "$f"; done

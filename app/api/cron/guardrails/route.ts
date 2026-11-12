@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase'
 import { fetchGA4Metric, evaluateGuardrail } from '@/lib/ga4'
+import { raiseAlert, resolveAlerts } from '@/lib/alerts'
+import { registerGoogleAuth } from '@/lib/google'
 
 export const maxDuration = 60
 
@@ -33,6 +35,8 @@ export async function GET(req: NextRequest) {
   }
 
   const results = []
+  const { data: clients } = await supabase.from('clients').select('id, ga4_property_id, google_refresh_token').not('google_refresh_token', 'is', null)
+  for (const c of clients ?? []) registerGoogleAuth(c)
 
   for (const g of guardrails ?? []) {
     const metricResult = await fetchGA4Metric(g.ga4_property_id, g.ga4_metric)
@@ -68,6 +72,15 @@ export async function GET(req: NextRequest) {
     await supabase.from('guardrail_checks').insert({
       guardrail_id: g.id, value: metricResult.value, status
     })
+
+    if (status === 'breached') {
+      await raiseAlert(supabase, {
+        clientId: g.client_id, type: 'guardrail_breach', dedupeKey: `guardrail:${g.id}`,
+        title: `Guardrail breached: ${g.metric_name}`,
+        message: `Current ${metricResult.value} vs baseline ${g.baseline_value ?? 'n/a'} (${g.threshold_type} ${g.threshold_value}).`,
+        link: `/clients/${g.client_id}`
+      })
+    } else await resolveAlerts(supabase, `guardrail:${g.id}`)
 
     results.push({ id: g.id, metric: g.metric_name, status, value: metricResult.value })
   }

@@ -1,71 +1,52 @@
-# ♟ Fischer v2 — CRO Agent
-### Algorithm Agency Internal Tool
+# ♟ Fischer — CRO Agent
+### Algorithm Agency
 
-Fischer is Algorithm Agency's AI-powered CRO audit agent. Feed it a URL and analytics data, and it returns a full conversion audit — friction points, revenue impact, and A/B test hypotheses — backed by the page's **actual scraped content**, not a guess.
-
-This is a backend rebuild of the original Phase 1 MVP. **The frontend is being rebuilt in Lovable** — this repo is now primarily an API + data layer. The two pages under `app/` (`/` and `/audit`) are a minimal fallback UI kept just so the API is testable end-to-end without waiting on the Lovable build.
+Fischer audits a client's pages the way a visitor sees them, backs every finding with evidence, stores every run, and tracks each client month over month: what changed on the site, what happened to conversions afterwards, and which A/B tests won. Each month it produces a client report you can share as a link or a PDF.
 
 ---
 
-## What changed from Phase 1, and why
+## What Fischer does
 
-| # | Problem in Phase 1 | Fix in v2 |
-|---|---|---|
-| 1 | Prompt said "fetch the page" but only `web_search` was wired up — audits ran on search snippets, not the real page | `lib/scraper.ts` does a real server-side fetch + HTML parse (title, headings, CTA text, form fields, trust signals, body copy) before the prompt is built |
-| 2 | Frontend parsed Claude's markdown output line-by-line, matching exact header strings — silently broke on any wording drift | `lib/claude.ts` now forces structured JSON output via tool-use (`submit_fischer_audit`) — typed, schema-validated, no prose parsing anywhere |
-| 3 | Zero persistence — every audit vanished on tab close | Supabase schema (`supabase/migrations/0001_core_schema.sql`): `audits`, `backlog_items`, `clients` tables. Every audit is saved; friction points can be promoted straight into the backlog |
-| 4 | Shared password stored as the literal cookie value, compared in plaintext, no per-user identity | Real Supabase Auth — each team member has their own account, sessions are proper signed tokens, `created_by` tracks who ran what |
-| 5 | No rate limiting on login or audit routes | Upstash Redis rate limiting (`lib/ratelimit.ts`) — 5 login attempts/min per IP, 10 audits/hour per user. Reuses the same Redis instance as Fischer Memory rather than a new one |
-
-Also fixed: hardcoded dated model snapshot → `claude-sonnet-4-6` alias; no input validation on the page URL → validated before any fetch happens; no distinction between "scrape failed" and "scrape succeeded but page is thin" → the model gets an explicit confidence flag either way and is instructed never to invent detail to cover a gap.
-
-### Screenshots — seeing the page, not just its text
-
-Text/DOM extraction alone can't judge visual hierarchy, CTA prominence, contrast, or clutter — two pages with identical HTML can convert completely differently based on how they actually look. `lib/screenshot.ts` captures real above-the-fold screenshots at both desktop (1440×900) and mobile (375×812) viewports, using a serverless-compatible headless Chromium (`@sparticuz/chromium` + `puppeteer-core`) running inside this same Vercel function — no separate crawler service, no new infrastructure.
-
-Both screenshots are sent to Claude as real image content blocks (not described in text), uploaded to Supabase Storage for persistence, and referenced from the `audits` table. If screenshot capture fails for any reason, the audit still runs on text/DOM data alone — the prompt explicitly tells Claude not to make visual claims in that case rather than guessing.
-
-**Vercel plan note:** `maxDuration = 90` on the audit route (scrape + 2 screenshots + Claude call). Vercel's Hobby plan caps functions at 60s — this route will need a Pro plan or higher to run reliably in production.
-
-### Confidence-gated manual capture — automatic first, manual only when needed
-
-Manual input is no longer a checkbox the user has to remember to tick. Auto-capture always runs first; `lib/confidence.ts` assesses whether what it got is actually usable per piece (HTML content, desktop screenshot, mobile screenshot independently):
-
-- **HTML** is flagged low-confidence if the fetch failed outright, the scraper's own JS-render heuristic tripped, or the word count is suspiciously thin (<50 words)
-- **Each screenshot viewport** is flagged independently — a mobile-specific block or redirect doesn't take down the desktop capture
-
-**If everything auto-captured is good enough:** the audit runs immediately, in one request, exactly like the fully-automatic path — no friction added for the common case where auto just works.
-
-**If something's missing:** the route returns early *without calling Claude* (`status: "needs_manual_input"`, plus the specific reason per piece) and persists whatever *did* succeed against the audit row. The frontend surfaces only the fields actually needed — if just the mobile screenshot failed, that's the only upload field shown, not a full manual-mode form. The user fills in the gap and resubmits with the same `auditId`; the route picks up where it left off rather than starting over, and only re-attempts auto-capture for viewports that still need it (a manually-supplied viewport is never re-captured, which would otherwise create a duplicate image sent to Claude).
-
-**Why this is better than an opt-in checkbox:** manual effort is now proportional to what actually failed, not a blanket decision the user has to make upfront. A page that auto-captures perfectly costs zero extra clicks; a page that's gated behind login only asks for what it genuinely can't get on its own.
+| | |
+|---|---|
+| **Sees the real page** | Loads every page in headless Chromium at desktop (1440px) and mobile (390px), dismisses cookie banners, scrolls to trigger lazy loading, and captures the **full page** as numbered screenshot sections. Text is extracted from the *rendered* DOM, so JavaScript sites work. Layout is measured from the live render: what's above the fold, CTA size/colour/position, form fields, sideways overflow, small tap targets, broken images, JS errors. |
+| **Evidence, not assumptions** | Every finding must cite its evidence (quoted copy, a measured value, a GA4/Clarity/PageSpeed number, or "mobile section 2") and its source. Findings that cite no evidence, or cite data that wasn't supplied (e.g. "Clarity shows…" with no Clarity connected), move to *unverified*. They're kept for the team and left out of client reports. The model may return few findings for a strong page; it is no longer forced to produce at least 5. |
+| **Numbers computed in code** | Revenue opportunity, A/B test sample sizes, test duration and significance are calculated in `lib/stats.ts` from real traffic, never by the model. |
+| **Every run stored** | Each audit keeps its screenshots, layout, extracted content, PageSpeed/GA4/Clarity data, a page fingerprint, and the model output. |
+| **Month-over-month tracking** | Tracked pages are re-audited every 30 days. Each audit reviews the previous audit's issues (resolved / improved / still present / worse) against the new screenshots, and detects what changed on the page. Monthly GA4 and Clarity snapshots are stored per client. |
+| **Change → impact** | Shipped backlog items, concluded A/B tests, detected page changes and manual entries go into a change log. Each change is measured over the 28 days before vs the 28 days after (GA4). |
+| **A/B tests** | Hypotheses come with a traffic-based test plan. Briefs give exact copy and targeting. Results are entered manually or pulled from GA4, then a two-proportion significance test is run. A test that wins is written to the change log. |
+| **Client reports** | A monthly report covering KPIs vs last month, an industry comparison, a 6-month trend, where revenue is leaking, the funnel, lead quality, changes and their impact, A/B tests, page audits with screenshots and fixes, and next month's plan. Share it as a no-login link or download a PDF. |
+| **Revenue leak map** | Every landing page × device from GA4, compared with the site's own conversion rate for that device (floored at 80% of the industry median once benchmarks exist). Valued in rand at half the gap, with no double counting. Mobile-vs-desktop gap and paid traffic on weak pages are shown separately. Leaking pages can be tracked with one click, or automatically each month. Audits of a leaking page are told why it was picked. |
+| **Tracking check** | During every audit, Fischer records which tags actually fire: GA4 (incl. server-side), GTM, Clarity, Google Ads, Meta, LinkedIn, TikTok, Hotjar. It also checks consent signals and the GA4 event list. Problems (tag missing or not sending, duplicate IDs, consent blocking analytics, no key events, conversion event missing) become findings and alerts. |
+| **Funnels + tracking kit** | Open funnels per device: lead (visitors → form start → submit) and e-commerce (view → cart → checkout → purchase), with the biggest drop, mobile gaps, the value of a 10% improvement, and the form fields people abandon on. `public/fischer-tracking.js` adds the standard lead events (form_start/submit/abandon, confirmed lead, call, WhatsApp, email clicks) plus first-touch UTMs, and never reads form values. |
+| **Journey checks** | Weekly, the browser acts as a mobile visitor. Lead: taps the main CTA, finds the form and inspects field types, labels, tap sizes, validation, CAPTCHA and contact links. Checkout: add to cart → cart → checkout, checking forced login, shipping visibility and payment methods. **Never submits anything.** A broken journey raises an alert. |
+| **Alerts** | Broken journeys, tracking problems, a >20% month-over-month conversion drop, guardrail breaches, and scheduled audits that fail or need input. Deduplicated while open, shown on the dashboard, and optionally posted to Slack/Teams (`ALERT_WEBHOOK_URL`). |
+| **Background queue** | Audits are queued and run by a per-minute worker (`claim_next_audit`, `SKIP LOCKED`), in parallel, with 3 retries and crashed-job recovery. Scheduled re-audits run on `FISCHER_SCHEDULED_MODEL` (default Sonnet 5.5); manual audits use `FISCHER_MODEL` (default Opus 5.5). |
+| **CRM lead quality** | The CRM, Zapier or Make posts leads to `/api/leads/ingest` (per-client key, hashed; no personal data stored). Fischer reports qualified rate, win rate and revenue per lead by landing page and source. Real revenue per lead becomes the leak map's value per conversion. |
+| **Benchmarks + test library** | Anonymised conversion-rate medians by industry and device (min. 3 clients, last 3 months). A library of every concluded test, tagged by change type, with win rates. Both feed audits and test planning. |
+| **Mockups + live A/B tests** | "Show mockup" on any finding or test idea: Fischer applies the change to the live page in a browser (sanitised page edits) and shows before/after. A test's variant can run live through the tracking kit (`abTests: true`). Visitors are split and stay in their group, and the group goes to GA4 as `fischer_exp`, so results sync and significance is calculated. One live kit test per site. |
+| **Google connection** | One-click "Connect Google" per client (read-only GA4, Search Console, Ads). Search Console queries feed message-match checks. Google Ads spend per landing page shows how much budget lands on below-average pages. Service-account GA4 still works without it. |
+| **Backlog, guardrails, competitors** | Backlog board (Watching → Next → This month → Shipped, PXL/ICE ranked; shipping logs a change). Guardrail metrics checked daily. Competitor scoring and market-position synthesis. |
+| **Roles + client portal** | Team roles (admin / analyst / viewer) and client logins that see only their own reports. Enforced by database row-level security. Activity log, data export and permanent deletion for POPIA/GDPR requests. |
+| **Ops** | Claude cost per audit, client, feature and model (Admin). Error log. Smoke test for staging (`npm run smoke`). CI runs typecheck, tests, build and all migrations. |
+| **Reporting extras** | Agency branding on reports. Scheduled report emails (Resend). Accessibility check (axe-core, WCAG 2.1 AA) on every audit. Clarity recording/heatmap links. Site discovery from the sitemap (key pages, forms, broken pages). |
 
 ---
 
-## Tests
+## What was broken, and what changed
 
-```bash
-npm test
-```
-
-29 unit tests covering the pure logic — no live credentials needed (no Supabase, Anthropic, or GA4 calls):
-- `tests/scraper.test.ts` — HTML parsing (`parseHtml`): CTA/form/trust-signal extraction, the JS-render heuristic, script-tag stripping
-- `tests/confidence.test.ts` — the confidence gate: independent per-viewport screenshot checks, thin-content and JS-render detection, boundary cases
-- `tests/ga4.test.ts` — guardrail threshold math for all three threshold types, including the zero-baseline divide-by-zero case and the exact-boundary case
-- `tests/pxl.test.ts` — PXL schema integrity (10 criteria, unique keys, weight sum)
-
-These were run and verified before this was packaged — including a deliberate sanity check (temporarily breaking the guardrail threshold logic to confirm the tests actually fail, not just pass vacuously) before reverting.
-
-**Not covered by these tests** — anything requiring live external services: the actual audit route end-to-end, screenshot capture, PageSpeed/GA4 API calls, Claude prompt output. Those need real credentials and are best tested against a staging Supabase project once one exists, not in an automated suite here.
-
-## Stack
-
-- **Next.js 14** (App Router) — API routes only, going forward
-- **Anthropic Claude Sonnet 4.6** — audit reasoning, structured tool-use output
-- **Supabase** — Postgres + Auth + RLS
-- **Upstash Redis** — rate limiting
-- **cheerio** — server-side HTML parsing for the scraper
-- **Vercel** — hosting
+| Problem | Fix |
+|---|---|
+| Audits were built on a plain `fetch()` of the raw HTML (an empty shell on most modern sites) plus one 900px screenshot. Everything below the fold was a guess. | `lib/capture.ts`: real-browser, full-page, two-viewport capture, with text from the rendered DOM and measured layout facts. |
+| The output schema **forced 5–10 friction points** and 3–5 tests on every page, so the model padded with generic issues. | Findings are optional (0–10), each requires evidence plus sources, and `validateFindings()` filters out unsupported ones. Strengths are reported too. |
+| The model did the revenue arithmetic. | `computeRevenueImpact()` does it. The model only supplies lift percentages. |
+| **Clarity integration returned zeros.** The parser looked for `data.results`, which the Clarity API doesn't return, so every audit told the model "0% rage clicks". | Rewritten for the real array-of-metrics response, with page matching that ignores `www`/query strings/trailing slashes, session-weighted aggregation and tests. A daily job stores history because Clarity only exposes 3 days. |
+| **GA4 used the deprecated `conversions` metric.** The page filter (`CONTAINS "/"`) matched every page, and "exit pages" were really top pages by sessions. | `keyEvents` (or the client's chosen event via `keyEvents:<event>`), exact page path matching, honest landing-page data, calendar-month date ranges. |
+| **Cron jobs could never run.** The middleware redirected session-less requests (i.e. Vercel Cron) to the login page. | `/api/cron/*` and `/report/*` are excluded from session auth. Crons check `CRON_SECRET`, and API routes return a JSON 401 instead of an HTML redirect. |
+| Forced `tool_choice` is rejected by current Claude models. | All model calls go through `lib/llm.ts`: structured outputs (`output_config.format`, Zod-validated), streaming, refusal fallback. |
+| Comparing audits matched friction points by fuzzy title. | The model reviews each previous issue against the new screenshots. A deterministic page fingerprint diff records what actually changed. |
+| `/api/audit` accepted any URL, including internal addresses. | `lib/validate.ts` blocks localhost and private/metadata IPs (SSRF). |
 
 ---
 
@@ -77,155 +58,158 @@ npm install
 ```
 
 ### 2. Supabase
-1. Create a project at [supabase.com](https://supabase.com) (or use the existing one if Fischer Memory already lives there — check for a `backlog_items` naming clash first).
-2. Run `supabase/migrations/0001_core_schema.sql` in the SQL Editor.
-3. Create team accounts: Dashboard → Authentication → Users → Add User (one per team member — Luke, Ashlin, etc). Or script it with `supabase.auth.admin.createUser()`.
-4. Copy the Project URL, anon key, and service role key into `.env.local`.
+Run the migrations **in order** in the SQL editor:
+`0001` → … → `0014`, in filename order. They are verified against PostgreSQL 16 in CI.
 
-### 3. Upstash Redis
-Reuse the existing Fischer Memory Redis instance credentials if there is one — no need for a second database.
+- **0011 replaces every access policy** (roles + client portal). All logins that exist when you run it become **admins**, so nobody is locked out. Add later team members under **Admin → Team**.
+- 0004 onwards are safe to re-run as a whole set. Don't re-run 0004–0010 on their own after 0011: they would re-add the old "any logged-in user" policies. Re-run 0011 afterwards if you ever do.
 
-### 4. Environment
+Create your own login first (Authentication → Users), then run the migrations.
+
+After deploying, encrypt any Clarity tokens saved before encryption existed:
 ```bash
-cp .env.local.example .env.local
-# fill in ANTHROPIC_API_KEY, Supabase and Upstash values
+npx tsx --env-file=.env.local scripts/encrypt-secrets.ts
 ```
 
-### 5. Run
+### 3. Environment
+```bash
+cp .env.local.example .env.local
+```
+Required: `ANTHROPIC_API_KEY`, Supabase URL + anon + service-role keys, `CRON_SECRET`, `FISCHER_ENCRYPTION_KEY` (`openssl rand -base64 32`; encrypts stored credentials), `FISCHER_PUBLIC_URL`.
+Recommended: `GOOGLE_PAGESPEED_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_KEY` (GA4 fallback), `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` (one-click Google), `RESEND_API_KEY` (report emails), Upstash (rate limiting), `ALERT_WEBHOOK_URL`.
+Optional: `GOOGLE_ADS_DEVELOPER_TOKEN` (+ `GOOGLE_ADS_API_VERSION`), `FISCHER_MODEL`, `FISCHER_SCHEDULED_MODEL`, `FISCHER_REAUDIT_DAYS`, `ERROR_WEBHOOK=true`.
+
+Then check everything with a real run (costs one Claude call with `--audit`):
+```bash
+npm run smoke -- --url=https://a-client-page.co.za/ --client=<client id> --audit
+```
+
+### 4. Hosting (Vercel)
+- **Pro plan needed.** Audits run up to 300s (full-page capture at two viewports + model analysis), and the monthly job runs hourly. Hobby caps functions at 60s and crons at once a day.
+- Cron schedules are in `vercel.json`: **worker (every minute)**, snapshots + leak maps + queuing re-audits (hourly), Clarity history (daily 02:15 UTC), journey checks (daily 03:20 UTC, each page weekly), guardrails (daily), report emails (daily 07:10 UTC, each client once a month on its send day).
+- **Google OAuth:** in Google Cloud, enable the Analytics Data, Analytics Admin, Search Console and Google Ads APIs. Create a Web OAuth client with redirect URI `{FISCHER_PUBLIC_URL}/api/google/callback`.
+- If Vercel Deployment Protection is on, PDF export needs `FISCHER_PUBLIC_URL` to point at a URL the function can reach (e.g. your production domain).
+
+### 5. Run locally
 ```bash
 npm run dev
 ```
+For local screenshots, set `CHROME_EXECUTABLE_PATH` to your Chrome binary (the serverless Chromium build only runs on Linux).
 
 ---
 
-## API contract (for the Lovable frontend)
+## Onboarding a client
 
-All routes require an authenticated Supabase session (cookie-based, set by `/api/auth`). Lovable's frontend should either:
-- **(a)** Use Supabase's own client SDK directly for reads (audits, backlog) — RLS handles authorization automatically, or
-- **(b)** Call these Next.js routes for anything that triggers Claude (auditing) or needs server-side logic (scraping, backlog promotion)
+1. **Clients → Add client.** Enter the name, website and value per conversion (average order or lead value).
+2. **Google:** Settings → **Connect Google** (sign in with an account that can see the client's GA4/Search Console/Ads), then pick the GA4 property, Search Console site and Ads account. *Without Google sign-in:* add the GA4 property ID and have the client add the service account email as a **Viewer** in GA4. Optionally set the conversion event (e.g. `generate_lead`); it must be a key event in GA4.
+3. **Clarity:** in Clarity → Settings → Data Export → *Generate new API token*, then paste the project ID and token.
+4. **Settings → Test connections** confirms GA4 access and stores the first day of Clarity data.
+5. **Settings → Tracking kit:** copy the snippet into the client's GTM (Custom HTML, All Pages), set the thank-you path, mark the lead event as a key event in GA4, and register `field_name` as a custom dimension.
+6. **Revenue leaks → Build leak map**, then **Track top 3 leaking pages** (or track pages by hand under Pages & audits). Tick *auto-track* in Settings to do this monthly.
+7. For each tracked page, choose a **journey** (lead or checkout) and click **Audit now** to set the baseline.
+8. **Lead quality → Create ingest key** and connect the client's CRM (directly or via Zapier/Make). Turn on `injectHiddenFields` in the tracking kit so every lead carries its landing page and UTMs.
+9. **Pages & audits → Scan site** to find forms, checkout and broken pages you might have missed.
+10. **Settings → Client portal:** give the client a login (optional), and **Reports → Email the report:** add recipients and switch on the monthly send.
 
-### `POST /api/auth`
-```json
-{ "email": "luke@algorithmagency.co.za", "password": "..." }
-```
-→ `{ "ok": true, "user": { "id", "email" } }`, sets session cookies.
+## The monthly cycle
 
-### `DELETE /api/auth` — sign out
+| When | What happens |
+|---|---|
+| Every minute | Worker runs queued audits. |
+| Daily | Clarity's last 24h is stored per client. The current month's GA4 snapshot is refreshed. Journey checks run for pages not checked in 7 days. |
+| Every 30 days per page | Tracked pages are re-audited automatically, with follow-up on last month's issues and page-change detection. |
+| 1st–4th of the month | Last month's snapshot is built and refreshed while GA4 finalises late data. Last month's leak map and funnel are built, top leaks auto-tracked (if enabled), and a conversion-drop alert raised if needed. |
+| During the month | Move backlog items to *shipped* (logged as changes), run A/B tests, log manual changes. |
+| Report day | Sent automatically on each client's send day, or **Reports** tab → *Send now* / *Create client link* / *Download PDF*. Clients with logins also see every report in the portal. |
 
-### `POST /api/audit`
-```json
-{
-  "clientName": "Subaru South Africa",
-  "pageUrl": "https://...",
-  "pageType": "Landing Page",
-  "businessGoal": "Lead Generation",
-  "monthlyTraffic": "15000",
-  "currentConversionRate": "1.8",
-  "avgOrderValue": "45000",
-  "deviceSplit": "60% Mobile / 40% Desktop",
-  "bounceRate": "62",
-  "avgSessionDuration": "1m 42s",
-  "topExitPages": "/checkout, /contact",
-  "additionalContext": "...",
+## A/B tests
 
-  "auditId": "(optional) present when resubmitting after a needs_manual_input response",
-  "manualHtml": "(optional) pasted DevTools outerHTML",
-  "manualScreenshotDesktop": "(optional) base64 image",
-  "manualScreenshotMobile": "(optional) base64 image"
-}
-```
+**Run them with Fischer:** on a test, click *Build variant*, check the mockup, then click *Go live*. The site needs the tracking kit with `abTests: true`. Register `fischer_exp` as a **user-scoped** custom dimension in GA4 once, so *Sync from GA4* can read results.
 
-Two possible response shapes:
-
-**Auto-capture got everything it needed** (the common case — no extra round trip):
-```json
-{ "auditId": "uuid", "status": "complete", "captureMode": "auto", "scrapeSucceeded": true, "screenshotsSucceeded": true, "screenshotUrls": { "desktop": "...", "mobile": "..." }, "result": AuditResult }
-```
-
-**Auto-capture couldn't get everything — Claude was NOT called, no cost incurred:**
-```json
-{
-  "auditId": "uuid",
-  "status": "needs_manual_input",
-  "needsManualHtml": false,
-  "needsManualDesktop": true,
-  "needsManualMobile": false,
-  "reasons": { "desktop": "Desktop screenshot capture failed." }
-}
-```
-Resubmit the same request with `auditId` set and the flagged field(s) filled in — only the missing pieces need to be supplied; anything that already succeeded is not re-requested.
-
-See `lib/claude.ts` for the full `AuditResult` shape (fischerScore, summary, confidenceNote, frictionPoints[], revenueImpact, abTestHypotheses[], actionPlan).
-
-Rate limited to 10/hour per user → `429` with a retry time if exceeded.
-
-### `GET /api/backlog?clientId=...&tier=...`
-→ `{ "items": BacklogItem[] }`
-
-### `POST /api/backlog`
-Manually add a backlog item (see `supabase/migrations/0001_core_schema.sql` for the full field list).
-
-### `POST /api/backlog/from-audit`
-```json
-{ "auditId": "uuid", "clientId": "uuid" }
-```
-Promotes every friction point from a completed audit into `backlog_items`, all starting in `tier: "watching"` per the CRO SOP — nothing skips straight to "this month."
+**Or with another tool:** entering visitor and conversion counts manually always works. To pull results from GA4:
+1. Make the testing tool write the visitor's variant to a **user property** (VWO, Convert, AB Tasty and Optimizely GA4 integrations can, or use `gtag('set', 'user_properties', { exp_variant: 'TEST12-B' })`).
+2. Register it in GA4 Admin → Custom definitions as a **user-scoped** custom dimension.
+3. On the test, set the dimension (`customUser:exp_variant`) and the control/variant values, then click **Sync from GA4**.
 
 ---
 
+## Screens
+
+| Path | Purpose |
+|---|---|
+| `/` | Login |
+| `/clients` | Client list with integration status |
+| `/clients/[id]` | Dashboard: Overview, Revenue leaks, Lead quality, Pages & audits, Backlog, Changes, A/B tests, Guardrails, Competitors, Reports, Settings |
+| `/audit` | Run a one-off or client audit. `/audit?view=<id>` shows a stored audit (with mockups, accessibility, tracking). |
+| `/library` | Benchmarks and the test library |
+| `/admin` | Admins: branding, team, activity log, Claude cost, errors |
+| `/account` | Change your password |
+| `/portal` | Client logins: their monthly reports |
+| `/report/[token]` | Public client report (token-protected, printable) |
+
+## API
+
+All routes need a team session (role-checked; viewers read-only, some admin-only) except `/report/*` (share token), `/api/cron/*` (`CRON_SECRET`), `/api/leads/ingest` (ingest key), `/api/kit/config` and `/fischer-tracking.js` (public).
+
+| Route | |
+|---|---|
+| `POST /api/audit` | Run an audit (`clientId` or `clientName`, `pageUrl`, `pageType`, `businessGoal`). With `async: true` it is queued (202, poll `GET /api/audits/[id]`). Otherwise it returns `complete` or `needs_manual_input` with the missing pieces; resubmit with `auditId` + `manualHtml` / `manualScreenshotDesktop` / `manualScreenshotMobile`. |
+| `GET/POST /api/clients/[id]/leaks` | Latest leak map / build one now (`days`, `period`, `trackTop`) |
+| `GET /api/clients/[id]/leads?days=` · `POST /api/clients/[id]/lead-key` | Lead quality report / create or rotate the CRM ingest key |
+| `POST /api/leads/ingest` | CRM lead feed (`Authorization: Bearer fsk_…`). One lead, an array, or `{ leads: [...] }`, max 500. Upserts by `externalId`. |
+| `GET/POST /api/journeys` | Journey checks for a client / run one for a tracked page |
+| `GET/PATCH /api/alerts` | Open alerts / resolve |
+| `GET /api/benchmarks[?clientId=]` · `GET /api/test-library?industry=&tag=` | Anonymised benchmarks / concluded tests and win rates |
+| `GET /api/audits?clientId=&pageUrl=` · `GET /api/audits/[id]` | Audit history / full audit |
+| `GET/POST/PATCH /api/clients` · `GET /api/clients/[id]` | Clients (Clarity tokens are masked on read) |
+| `POST /api/clients/[id]/test-integrations` | Check GA4 + Clarity credentials |
+| `GET /api/clients/[id]/trends` | Monthly snapshots, score history per page, changes, tests |
+| `GET/POST/PATCH/DELETE /api/tracked-pages` | Pages re-audited monthly |
+| `GET/POST/DELETE /api/changes` | Change log (`?measure=1` computes before/after impact) |
+| `PATCH /api/backlog/[id]` | Update a backlog item (moving to `shipped` logs a change) |
+| `POST /api/test-brief` · `GET /api/test-brief?clientId=` | Create a test from an audit hypothesis / list tests |
+| `GET/PATCH /api/tests/[id]` · `POST /api/tests/[id]/sync-ga4` | Test lifecycle, results + significance, GA4 pull |
+| `GET/POST/DELETE /api/reports/[clientId]` | Report data / create share link / revoke |
+| `GET /api/reports/[clientId]/pdf?period=YYYY-MM` | PDF download |
+| `GET/POST /api/reports/[clientId]/email` | Email history / send the report now |
+| `POST /api/mockups` · `POST /api/tests/[id]/variant` | Before/after mockup for a finding or hypothesis / build a test's live variant |
+| `GET /api/kit/config?host=` | Public: live tests for a site (read by the tracking kit) |
+| `GET /api/google/connect?clientId=` · `GET/PATCH/DELETE /api/clients/[id]/google` | Google sign-in / pick property, site, Ads account / disconnect |
+| `GET/POST /api/clients/[id]/discover` | Site scan |
+| `GET /api/clients/[id]/export` · `DELETE /api/clients/[id]` | Admin: export all client data / delete permanently |
+| `GET/POST/PATCH/DELETE /api/team` · `/api/clients/[id]/users` | Admin: team roles / client portal logins |
+| `GET/PATCH /api/settings` · `GET /api/usage` · `GET /api/errors` | Branding / Claude cost / error log |
+
+Unchanged: `/api/backlog`, `/api/backlog/from-audit`, `/api/backlog/[id]/pxl-score`, `/api/guardrails`, `/api/market-share`, `/api/audits/compare`, `/api/reports/[clientId]/draft`.
+
 ---
 
-## Phase 3 — the five remaining SOP/rollout-plan builds
+## Tests
 
-Everything below closes out the gaps flagged across the CRO SOP and the rollout plan. Each is genuinely new — not present in Phase 2.
+```bash
+npm test
+```
+112 unit tests, no credentials needed: confidence gate (including bot-protection pages), the Clarity parser against the real response shape, statistics, finding validation and audit post-processing, page change detection, URL safety, GA4 helpers, HTML parsing, leak map maths (incl. no double counting and benchmark floors), tracking detection, funnels, journey issues, lead normalisation and quality, benchmarks and the test library, cost calculation, credential encryption, role routing, page-edit sanitising, Google helpers, discovery, branding, emails and accessibility.
 
-### 1. Core Web Vitals (Google PageSpeed Insights)
+Also verified here, on local test pages and a real PostgreSQL 16:
+- **In a browser:** full-page capture, the tracking check, the tracking kit, both journey types, mockups, the live A/B runner (incl. XSS stripping), site discovery and the axe check.
+- **In the database:** all migrations, the queue's claim function (ordering, crash recovery, attempt limit, two-worker race) and the access rules for admin, viewer, client user and stranger.
 
-`lib/pagespeed.ts` — fetches mobile and desktop scores independently (per Google's own recommendation, since the two genuinely differ) and feeds LCP/INP/CLS straight into the audit prompt alongside the scraped content and screenshots. A slow page is now something Fischer can actually see and cite as a friction point, not an invisible gap. Free, 25,000 queries/day, no infrastructure.
+Not tested here (they need live credentials): real Claude calls, GA4/Clarity/PageSpeed/Search Console/Google Ads APIs, Google sign-in, Resend, Supabase Auth and Storage, PDF rendering on Vercel. Run `npm run smoke` on staging.
 
-Fetched *after* the confidence gate passes — no point spending PSI quota on a request that's about to bail out for manual input anyway.
+## Known limitations
 
-### 2. Guardrail metric polling
-
-`lib/ga4.ts` + `app/api/cron/guardrails/route.ts` + `vercel.json` — real Google Analytics Data API integration, checked on a schedule (daily by default, see `vercel.json`), not by a person remembering to log into GA4. Per the CRO SOP: 2-4 metrics per client, pre-set thresholds, a breach is a reportable finding on its own.
-
-**Setup required before this runs for real:** a GA4 service account (`GOOGLE_SERVICE_ACCOUNT_KEY`) needs Viewer access explicitly granted on each client's GA4 property — the key alone grants nothing. Use `POST /api/guardrails` to register what to watch per client (metric name, GA4 property ID, GA4 metric name, threshold).
-
-The cron route uses the service-role Supabase client deliberately, since Vercel's scheduler has no logged-in user session — RLS's `authenticated`-only policies would otherwise block it.
-
-### 3. PXL auto-scoring
-
-`lib/pxl.ts` + `POST /api/backlog/[id]/pxl-score` — the 10 binary PXL criteria from CRO SOP Section 04, scored via forced tool-use (not a subjective 1-10), grounded in the backlog item's actual source audit context where available rather than scored from the title alone. Weighted (above-the-fold and qualitative-evidence-backed items score higher) — see `PXL_CRITERIA` in `lib/pxl.ts` if the weighting needs adjusting for how your team actually prioritizes.
-
-### 4. Market share / competitor analysis
-
-`lib/marketshare.ts` + `POST /api/market-share` — genuinely new; this did not exist anywhere in the uploaded codebase (the `market-share.functions.ts` referenced in earlier work must live in the separate TanStack/Supabase project). Three pieces:
-- **Competitor audit** — a lighter version of the main audit pipeline (same scraper, shorter Claude prompt: score + top 3-5 friction points only, not the full revenue/A-B-test depth), run once per competitor
-- **Traffic estimate** — Claude's `web_search` tool, zero marginal cost, honestly labeled as indicative ("50k-100k monthly visits", not a fake-precise number). DataForSEO remains the documented upgrade path for clients who need real precision — not built here
-- **Synthesis** — the four-section output (Market Position / Competitive Gaps / Revenue Opportunity / Recovery Roadmap) proven out in earlier planning, now actually implemented with structured output
-
-Persists to `competitor_audits` and `market_share_analyses`. Cadence (monthly light refresh for Tier A, quarterly for Tier B, on-request for Tier C, per CRO SOP Section 06) is a scheduling decision for whoever calls this route — it's not built as its own cron, since the right cadence differs per client tier.
-
-### 5. Report auto-draft
-
-`GET /api/reports/[clientId]/draft` — assembles the exact JSON shape the branded report generator (`generate_report.py` from the CRO report kit) expects, directly from live data: shipped items and their results, what's currently in "this month," what's queued in "next," and a market-share highlight for the Fischer Intelligence slot. This is a first draft to edit, not a document to write from a blank page — it does not render the PDF itself, that stays a separate step using the existing Python/Playwright pipeline.
-
-## Known limitations, worth knowing before scaling this up
-
-- **The text/DOM scraper only sees static HTML** — JS-heavy SPAs may come back thin from `lib/scraper.ts`. The screenshots, however, use a real headless browser and *do* render JavaScript correctly — so a JS-heavy page will still get a proper visual audit even when its text extraction is weak. The prompt is written to treat these as independent signals rather than assuming one implies the other.
-- **Screenshot capture adds real cold-start cost.** Launching headless Chromium takes 2-4 seconds per invocation; capturing two viewports plus the scrape plus the Claude call is why `maxDuration` is set to 90s. Worth monitoring actual run times once this is live — if audits start timing out, screenshot capture should move to a background job rather than blocking the main request.
-- **Audit route runs synchronously** (scrape + screenshots + Claude call in one request). Fine for now; if this starts feeling slow, this should move to a background job (Supabase Edge Function or a queue) with the frontend polling `audits.status`.
-- **RLS is single-tenant** (any authenticated user sees everything). Fine while it's just Algorithm Agency's team; needs `agency_id`-scoped policies before any external agency ever gets access.
-- **Not yet added: Core Web Vitals / page speed data.** A slow page can be the single biggest conversion killer and neither the scraper nor the screenshots can see it. Google's PageSpeed Insights API is free (25,000 queries/day) and gives LCP/INP/CLS for both mobile and desktop — worth adding as the next data source, same pattern as the screenshot capture.
-- **Minor inefficiency on resubmission:** if only one viewport needed manual input, the other viewport (which already succeeded automatically) gets auto-recaptured from scratch on resubmit rather than reusing the first attempt's result. Harmless — just an extra Chromium launch — but worth optimizing later by fetching the already-uploaded screenshot back from Supabase Storage instead of recapturing it.
-- **Guardrail polling needs real setup before it does anything.** The cron job runs on schedule regardless, but every guardrail needs its GA4 property ID registered via `POST /api/guardrails`, and the service account needs Viewer access granted per-property in each client's own GA4 Admin panel — this doesn't happen automatically just because the env var is set.
-- **Market share traffic estimates are indicative, not precise** — by design, since they're free (`web_search`-based). If a specific client relationship needs defensible precise numbers for a board presentation, that's the trigger for the documented DataForSEO upgrade, not a reason to distrust the default.
-- **The `@anthropic-ai/sdk` version installed doesn't have typed support for the `web_search` tool yet** — `lib/marketshare.ts` casts the tools array to `any` for that one call. The Messages API itself supports it regardless of SDK type lag; worth removing the cast once the SDK catches up.
+- **One agency per install.** Team members see every client; client logins see only their own. Reselling Fischer to *other agencies* would need an extra `agency_id` layer.
+- **Live kit tests are client-side**, like most testing tools. The first view may hide the page for up to 0.7s while the variant loads. Very dynamic pages may need simpler edits.
+- **Funnels are open funnels** (users who reached each step's event), not strictly sequential. GA4's sequential funnel API is still alpha.
+- **Journey checks never submit,** so they prove the form is reachable and well built, not that submissions arrive. The tracking kit's lead event plus the conversion-drop alert cover that.
+- **Before/after ≠ causation.** Change impact compares 28-day windows, and seasonality and campaigns also move numbers. Reports say so. A/B tests are the controlled evidence.
+- **Clarity history starts when you connect it.** Clarity only exposes the last 3 days, so month-level Clarity data builds up from the first daily collection.
+- **Heavily bot-protected sites** (Cloudflare challenges etc.) are detected and the audit asks for manual screenshots/HTML instead of auditing the challenge page.
+- Pages longer than ~10,800px (desktop) / ~11,900px (mobile) are captured down to that depth, and the prompt notes the truncation.
 
 ---
 
 ## Algorithm Agency IP
 
 Fischer is proprietary to Algorithm Agency. The system prompt, audit framework, and revenue calculation methodology are Algorithm Agency intellectual property. Do not share this codebase externally.
-
-**Fischer v2.0** · Algorithm Agency · Internal Use Only

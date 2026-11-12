@@ -1,304 +1,328 @@
 'use client'
-import { useState } from 'react'
-import type { AuditResult } from '@/lib/claude'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { Page, Button, Field, Pill, inputStyle, cardStyle, labelStyle, T, api, scoreColor } from '@/components/ui'
+import type { AuditResult, FrictionPoint } from '@/lib/claude'
+import { MockupButton } from '@/components/Mockups'
+import { A11yCard, ClarityLinks } from '@/components/ExtraCards'
 
-const INPUT_STYLE: React.CSSProperties = {
-  width: '100%', padding: '12px 14px', background: '#0D1B2E',
-  border: '1px solid #1E3A5F', borderRadius: '8px', color: '#FFFFFF',
-  fontSize: '14px', outline: 'none', boxSizing: 'border-box'
-}
-const LABEL_STYLE: React.CSSProperties = {
-  display: 'block', fontSize: '11px', color: '#7A9BBD',
-  letterSpacing: '2px', marginBottom: '8px', fontWeight: 600
-}
-const CARD_STYLE: React.CSSProperties = {
-  background: '#112240', border: '1px solid #1E3A5F',
-  borderRadius: '12px', padding: '28px', marginBottom: '20px'
-}
+const SEV = { high: T.bad, medium: T.warn, low: '#FFD700' }
+const STATUS: Record<string, string> = { resolved: T.good, improved: T.good, still_present: T.warn, worse: T.bad, cannot_verify: T.muted }
 
-const SEVERITY_COLOR = { high: '#FF4757', medium: '#FF6B35', low: '#FFD700' }
+const fileToBase64 = (f: File) => new Promise<string>((res, rej) => {
+  const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f)
+})
 
 export default function AuditPage() {
+  const [viewId, setViewId] = useState<string | null>(null)
+  useEffect(() => { setViewId(new URLSearchParams(window.location.search).get('view')) }, [])
+  return viewId ? <AuditView id={viewId} /> : <RunAudit onDone={id => { window.history.pushState({}, '', `/audit?view=${id}`); setViewId(id) }} />
+}
+
+// ------------------------------------------------------------------ Run
+function RunAudit({ onDone }: { onDone: (id: string) => void }) {
+  const [clients, setClients] = useState<any[]>([])
   const [form, setForm] = useState({
-    clientName: '', pageUrl: '', pageType: 'Landing Page',
-    businessGoal: 'Lead Generation', monthlyTraffic: '',
-    currentConversionRate: '', avgOrderValue: '',
-    deviceSplit: '60% Mobile / 40% Desktop',
-    bounceRate: '', avgSessionDuration: '',
-    topExitPages: '', additionalContext: ''
+    clientId: '', clientName: '', pageUrl: '', pageType: 'Landing Page', businessGoal: 'Lead Generation',
+    monthlyTraffic: '', currentConversionRate: '', avgOrderValue: '', additionalContext: ''
   })
+  const [manual, setManual] = useState<{ auditId: string; needsManualHtml: boolean; needsManualDesktop: boolean; needsManualMobile: boolean; reasons: Record<string, string> } | null>(null)
   const [manualHtml, setManualHtml] = useState('')
-  const [manualDesktopFile, setManualDesktopFile] = useState<string | null>(null)
-  const [manualMobileFile, setManualMobileFile] = useState<string | null>(null)
-  const [needsManualInput, setNeedsManualInput] = useState<{
-    auditId: string
-    needsManualHtml: boolean
-    needsManualDesktop: boolean
-    needsManualMobile: boolean
-    reasons: { html?: string; desktop?: string; mobile?: string }
-  } | null>(null)
+  const [manualDesktop, setManualDesktop] = useState<string | null>(null)
+  const [manualMobile, setManualMobile] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
-  const [result, setResult] = useState<AuditResult | null>(null)
-  const [completedAuditId, setCompletedAuditId] = useState<string | null>(null)
-  const [scrapeSucceeded, setScrapeSucceeded] = useState<boolean | null>(null)
-  const [captureMode, setCaptureMode] = useState<string | null>(null)
+  const [progress, setProgress] = useState('')
 
-  function updateForm(field: string, value: string) {
-    setForm(prev => ({ ...prev, [field]: value }))
-  }
+  useEffect(() => { api('/api/clients').then(d => setClients(d.clients)).catch(() => {}) }, [])
+  const client = clients.find(c => c.id === form.clientId)
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setForm({ ...form, [k]: e.target.value })
 
-  function handleFileUpload(file: File, setter: (b64: string) => void) {
-    const reader = new FileReader()
-    reader.onload = () => setter(reader.result as string)
-    reader.readAsDataURL(file)
-  }
-
-  async function runAudit(e: React.FormEvent) {
-    e.preventDefault()
-    setRunning(true)
-    setError('')
-    setResult(null)
-
+  async function run() {
+    setRunning(true); setError('')
     try {
-      const res = await fetch('/api/audit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          auditId: needsManualInput?.auditId,
-          manualHtml: manualHtml || undefined,
-          manualScreenshotDesktop: manualDesktopFile || undefined,
-          manualScreenshotMobile: manualMobileFile || undefined
-        })
-      })
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || 'Audit failed.')
-      } else if (data.status === 'needs_manual_input') {
-        // Auto-capture couldn't get everything it needed — surface exactly
-        // which piece(s) failed and why, instead of an all-or-nothing manual mode
-        setNeedsManualInput({
-          auditId: data.auditId,
-          needsManualHtml: data.needsManualHtml,
-          needsManualDesktop: data.needsManualDesktop,
-          needsManualMobile: data.needsManualMobile,
-          reasons: data.reasons
-        })
-      } else {
-        setResult(data.result)
-        setCompletedAuditId(data.auditId)
-        setScrapeSucceeded(data.scrapeSucceeded)
-        setCaptureMode(data.captureMode)
-        setNeedsManualInput(null)
+      const body: any = { ...form, clientId: form.clientId || undefined, async: !manual }
+      if (manual) {
+        body.auditId = manual.auditId
+        if (manualHtml) body.manualHtml = manualHtml
+        if (manualDesktop) body.manualScreenshotDesktop = manualDesktop
+        if (manualMobile) body.manualScreenshotMobile = manualMobile
       }
-    } catch (err) {
-      setError('Network error running audit. Please try again.')
-    } finally {
-      setRunning(false)
-    }
+      const r = await api('/api/audit', { method: 'POST', json: body })
+      if (r.status === 'needs_manual_input') setManual(r)
+      else if (r.status === 'queued') {
+        // Poll the queued job
+        for (;;) {
+          await new Promise(res => setTimeout(res, 5000))
+          const { audit } = await api(`/api/audits/${r.auditId}`)
+          setProgress(audit.status === 'queued' ? 'Queued — a worker picks it up within a minute…' : audit.status === 'running' ? 'Running: capturing the page and analysing…' : '')
+          if (audit.status === 'complete') { onDone(r.auditId); break }
+          if (audit.status === 'needs_manual_input') {
+            const c = audit.capture_metadata?.confidence
+            setManual({ auditId: r.auditId, needsManualHtml: !c?.htmlOk, needsManualDesktop: !c?.desktopOk, needsManualMobile: !c?.mobileOk, reasons: c?.reasons ?? {} })
+            break
+          }
+          if (audit.status === 'failed') { setError(audit.error_message || 'Audit failed.'); break }
+        }
+      }
+      else onDone(r.auditId)
+    } catch (e) { setError(e instanceof Error ? e.message : 'Audit failed') }
+    finally { setRunning(false) }
   }
 
-  async function promoteToBacklog() {
-    if (!completedAuditId) return
-    // NOTE: clientId lookup/creation is intentionally left for the Lovable
-    // frontend to wire up properly against the clients table/UI — this
-    // fallback page just demonstrates the endpoint contract.
-    alert('Promote-to-backlog needs a real clientId — wire this up once client records exist. Endpoint: POST /api/backlog/from-audit')
+  const ready = form.pageUrl && (form.clientId || form.clientName)
+  return (
+    <Page title="Run an audit">
+      <div style={{ ...cardStyle, maxWidth: 760 }}>
+        <Field label="Client">
+          <select style={inputStyle} value={form.clientId} onChange={set('clientId')}>
+            <option value="">— One-off (not saved to a client) —</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}{c.integrations.ga4 ? ' · GA4' : ''}{c.integrations.clarity ? ' · Clarity' : ''}</option>)}
+          </select>
+        </Field>
+        {!form.clientId && <Field label="Client name"><input style={inputStyle} value={form.clientName} onChange={set('clientName')} /></Field>}
+        <Field label="Page URL"><input style={inputStyle} value={form.pageUrl} onChange={set('pageUrl')} placeholder="https://…" /></Field>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Page type"><select style={inputStyle} value={form.pageType} onChange={set('pageType')}>{['Landing Page', 'Home Page', 'Product Page', 'Category Page', 'Checkout', 'Pricing Page', 'Contact / Lead Form', 'Blog / Content'].map(o => <option key={o}>{o}</option>)}</select></Field>
+          <Field label="Goal"><select style={inputStyle} value={form.businessGoal} onChange={set('businessGoal')}>{['Lead Generation', 'E-commerce Sales', 'Bookings', 'Sign-ups', 'Calls', 'Quote Requests'].map(o => <option key={o}>{o}</option>)}</select></Field>
+        </div>
+        {!client?.integrations?.ga4 && (
+          <>
+            <p style={{ fontSize: 12, color: T.muted }}>No GA4 connected{form.clientId ? ' for this client' : ''} — add figures manually for revenue estimates and test planning (optional).</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <Field label="Monthly sessions"><input style={inputStyle} value={form.monthlyTraffic} onChange={set('monthlyTraffic')} inputMode="numeric" /></Field>
+              <Field label="Conversion rate %"><input style={inputStyle} value={form.currentConversionRate} onChange={set('currentConversionRate')} inputMode="decimal" /></Field>
+              <Field label="Value per conversion"><input style={inputStyle} value={form.avgOrderValue} onChange={set('avgOrderValue')} inputMode="decimal" /></Field>
+            </div>
+          </>
+        )}
+        <Field label="Context for Fischer (optional)"><textarea style={{ ...inputStyle, minHeight: 70 }} value={form.additionalContext} onChange={set('additionalContext')} placeholder="Campaign landing page for Google Ads; main KPI is test-drive bookings…" /></Field>
+
+        {manual && (
+          <div style={{ border: `1px solid ${T.warn}`, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+            <strong style={{ color: T.warn }}>Fischer couldn&apos;t capture everything automatically</strong>
+            <p style={{ fontSize: 13, color: T.muted }}>Nothing has been charged yet. Supply only the missing piece(s) and run again.</p>
+            {manual.needsManualHtml && <Field label={`Page HTML — ${manual.reasons.html}`}><textarea style={{ ...inputStyle, minHeight: 90 }} value={manualHtml} onChange={e => setManualHtml(e.target.value)} placeholder="DevTools → Elements → right-click <html> → Copy outerHTML" /></Field>}
+            {manual.needsManualDesktop && <Field label={`Desktop screenshot — ${manual.reasons.desktop}`}><input type="file" accept="image/jpeg,image/png" onChange={async e => e.target.files?.[0] && setManualDesktop(await fileToBase64(e.target.files[0]))} /></Field>}
+            {manual.needsManualMobile && <Field label={`Mobile screenshot — ${manual.reasons.mobile}`}><input type="file" accept="image/jpeg,image/png" onChange={async e => e.target.files?.[0] && setManualMobile(await fileToBase64(e.target.files[0]))} /></Field>}
+          </div>
+        )}
+        {error && <div style={{ color: T.bad, marginBottom: 10 }}>{error}</div>}
+        <Button onClick={run} disabled={!ready || running}>{running ? 'Auditing… (1–4 min)' : manual ? 'Resume audit' : 'Run Fischer audit'}</Button>
+        {running && <p style={{ fontSize: 12, color: T.muted }}>{progress || 'Loading the page in a real browser, capturing it top to bottom on desktop and mobile, pulling PageSpeed/GA4/Clarity, then analysing.'} You can leave this page — the audit keeps running and appears on the client dashboard.</p>}
+      </div>
+    </Page>
+  )
+}
+
+// ------------------------------------------------------------------ View
+function AuditView({ id }: { id: string }) {
+  const [audit, setAudit] = useState<any>(null)
+  const [error, setError] = useState('')
+  const [shotView, setShotView] = useState<'desktop' | 'mobile'>('desktop')
+  const [showUnverified, setShowUnverified] = useState(false)
+  const [briefBusy, setBriefBusy] = useState<number | null>(null)
+  const [promoted, setPromoted] = useState(false)
+  const [mockups, setMockups] = useState<any[]>([])
+  const [clarityProject, setClarityProject] = useState<string | null>(null)
+
+  useEffect(() => { api(`/api/audits/${id}`).then(d => setAudit(d.audit)).catch(e => setError(e.message)) }, [id])
+  useEffect(() => { api(`/api/mockups?auditId=${id}`).then(d => setMockups(d.mockups)).catch(() => {}) }, [id])
+  useEffect(() => { if (audit?.client_id) api(`/api/clients/${audit.client_id}`).then(d => setClarityProject(d.client.clarity_project_id)).catch(() => {}) }, [audit?.client_id])
+  const mockupFor = (kind: string, i: number) => mockups.find(m => m.source === kind && m.source_index === i)
+
+  if (error) return <Page title="Audit"><p style={{ color: T.bad }}>{error}</p></Page>
+  if (!audit) return <Page title="Audit"><p style={{ color: T.muted }}>Loading…</p></Page>
+  if (audit.status !== 'complete') {
+    const pending = audit.status === 'queued' || audit.status === 'running'
+    return <Page title="Audit"><div style={cardStyle}><Pill color={T.warn}>{audit.status.replace(/_/g, ' ')}</Pill>
+      <p>{pending ? 'This audit is in progress — this page refreshes automatically.' : audit.error_message || 'This audit has not completed.'}</p>
+      {pending && <AutoRefresh />}
+      <Link href="/audit" style={{ color: T.gold }}>Run a new audit</Link></div></Page>
+  }
+
+  const r = audit.output as AuditResult
+  const shots = audit.screenshots?.[shotView] ?? []
+  const ds = audit.capture_metadata ?? {}
+  const money = (n: number) => `${r.revenueImpact.currency === 'ZAR' ? 'R' : r.revenueImpact.currency + ' '}${Math.round(n).toLocaleString('en-ZA')}`
+
+  async function createBrief(i: number) {
+    setBriefBusy(i)
+    try { await api('/api/test-brief', { method: 'POST', json: { auditId: id, hypothesisIndex: i } }); alert('Test brief created — see the client’s A/B tests tab.') }
+    catch (e) { alert(e instanceof Error ? e.message : 'Failed') }
+    finally { setBriefBusy(null) }
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#080E1A', padding: '40px', color: '#fff' }}>
-      <div style={{ display: 'flex', gap: '32px', maxWidth: '1400px', margin: '0 auto' }}>
-        {/* LEFT — Form */}
-        <div style={{ width: '420px', flexShrink: 0 }}>
-          <h1 style={{ fontSize: '22px', marginBottom: '24px' }}>♟ Run Fischer Audit</h1>
-          <form onSubmit={runAudit}>
-            <div style={CARD_STYLE}>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={LABEL_STYLE}>CLIENT NAME</label>
-                <input style={INPUT_STYLE} value={form.clientName} onChange={e => updateForm('clientName', e.target.value)} required />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={LABEL_STYLE}>PAGE URL</label>
-                <input style={INPUT_STYLE} value={form.pageUrl} onChange={e => updateForm('pageUrl', e.target.value)} placeholder="https://example.com/page" required />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={LABEL_STYLE}>MONTHLY TRAFFIC</label>
-                <input style={INPUT_STYLE} value={form.monthlyTraffic} onChange={e => updateForm('monthlyTraffic', e.target.value)} placeholder="e.g. 15000" required />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={LABEL_STYLE}>CONVERSION RATE %</label>
-                <input style={INPUT_STYLE} value={form.currentConversionRate} onChange={e => updateForm('currentConversionRate', e.target.value)} placeholder="e.g. 1.8" required />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={LABEL_STYLE}>AVG ORDER / LEAD VALUE (R)</label>
-                <input style={INPUT_STYLE} value={form.avgOrderValue} onChange={e => updateForm('avgOrderValue', e.target.value)} placeholder="e.g. 45000" required />
-              </div>
-              <div>
-                <label style={LABEL_STYLE}>ADDITIONAL CONTEXT</label>
-                <textarea style={{ ...INPUT_STYLE, height: '80px' }} value={form.additionalContext} onChange={e => updateForm('additionalContext', e.target.value)} />
-              </div>
-            </div>
+    <Page title={audit.client_name} actions={<div style={{ display: 'flex', gap: 8 }}>
+      {audit.client_id && <Link href={`/clients/${audit.client_id}`}><Button kind="ghost">Client dashboard</Button></Link>}
+      <Link href="/audit"><Button kind="ghost">New audit</Button></Link>
+    </div>}>
+      <div style={{ color: T.muted, marginTop: -10, marginBottom: 16, wordBreak: 'break-all' }}>{audit.page_url} · {audit.completed_at.slice(0, 16).replace('T', ' ')} {audit.trigger === 'scheduled' && <Pill>scheduled</Pill>}</div>
 
-            {/* Confidence-gate manual input — only appears when auto-capture actually needs it */}
-            {needsManualInput && (
-              <div style={{ ...CARD_STYLE, border: '1px solid #FF6B35' }}>
-                <div style={{ color: '#FF6B35', fontWeight: 700, fontSize: '13px', marginBottom: '10px' }}>
-                  ⚠ Auto-capture couldn't get everything it needs
-                </div>
-
-                {needsManualInput.needsManualHtml && (
-                  <div style={{ marginBottom: '14px' }}>
-                    <div style={{ fontSize: '11px', color: '#FF6B35', marginBottom: '6px' }}>
-                      {needsManualInput.reasons.html}
-                    </div>
-                    <label style={LABEL_STYLE}>PASTED HTML (DevTools → right-click &lt;html&gt; → Copy → Copy outerHTML)</label>
-                    <textarea
-                      style={{ ...INPUT_STYLE, height: '100px', fontFamily: 'monospace', fontSize: '11px' }}
-                      value={manualHtml} onChange={e => setManualHtml(e.target.value)}
-                      placeholder="Paste the copied HTML here"
-                    />
-                  </div>
-                )}
-
-                {(needsManualInput.needsManualDesktop || needsManualInput.needsManualMobile) && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                    {needsManualInput.needsManualDesktop && (
-                      <div>
-                        <div style={{ fontSize: '11px', color: '#FF6B35', marginBottom: '6px' }}>
-                          {needsManualInput.reasons.desktop}
-                        </div>
-                        <label style={LABEL_STYLE}>DESKTOP SCREENSHOT</label>
-                        <input type="file" accept="image/*" onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], setManualDesktopFile)} style={{ fontSize: '12px', color: '#B8C8D8' }} />
-                        {manualDesktopFile && <div style={{ fontSize: '11px', color: '#00E5A0', marginTop: '4px' }}>✓ Uploaded</div>}
-                      </div>
-                    )}
-                    {needsManualInput.needsManualMobile && (
-                      <div>
-                        <div style={{ fontSize: '11px', color: '#FF6B35', marginBottom: '6px' }}>
-                          {needsManualInput.reasons.mobile}
-                        </div>
-                        <label style={LABEL_STYLE}>MOBILE SCREENSHOT</label>
-                        <input type="file" accept="image/*" onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], setManualMobileFile)} style={{ fontSize: '12px', color: '#B8C8D8' }} />
-                        {manualMobileFile && <div style={{ fontSize: '11px', color: '#00E5A0', marginTop: '4px' }}>✓ Uploaded</div>}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <p style={{ fontSize: '11px', color: '#7A9BBD', marginTop: '12px' }}>
-                  Fill in what's requested above, then hit "Run Fischer Audit" again to continue this same audit.
-                </p>
-              </div>
-            )}
-
-            <button
-              type="submit" disabled={running}
-              style={{
-                width: '100%', padding: '16px',
-                background: running ? '#0A3A5A' : 'linear-gradient(135deg, #00C2FF, #0A7FA8)',
-                border: 'none', borderRadius: '10px', color: '#080E1A',
-                fontSize: '14px', fontWeight: 700, letterSpacing: '1.5px',
-                cursor: running ? 'wait' : 'pointer'
-              }}
-            >
-              {running ? 'FISCHER IS ANALYSING...' : needsManualInput ? '♟ CONTINUE AUDIT' : '♟ RUN FISCHER AUDIT'}
-            </button>
-          </form>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Fischer Score</div>
+          <div style={{ fontSize: 56, fontWeight: 700, color: scoreColor(r.fischerScore), lineHeight: 1 }}>{r.fischerScore}<span style={{ fontSize: 20, color: T.muted }}>/100</span></div>
+          {r.scoreBreakdown && <div style={{ marginTop: 14 }}>{Object.entries(r.scoreBreakdown).map(([k, v]) => (
+            <div key={k} style={{ marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: T.muted }}><span>{k.replace(/([A-Z])/g, ' $1').toLowerCase()}</span><span>{v}</span></div>
+              <div style={{ height: 5, background: T.line, borderRadius: 3 }}><div style={{ width: `${v}%`, height: 5, borderRadius: 3, background: scoreColor(v) }} /></div>
+            </div>))}</div>}
         </div>
-
-        {/* RIGHT — Output */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {error && (
-            <div style={{ ...CARD_STYLE, borderColor: '#FF4757', color: '#FF4757' }}>{error}</div>
-          )}
-
-          {!result && !running && !error && !needsManualInput && (
-            <div style={{
-              background: '#112240', border: '1px dashed #1E3A5F', borderRadius: '12px',
-              padding: '64px 40px', textAlign: 'center', color: '#4A6A8A'
-            }}>
-              Fill in the form and run an audit — Fischer now fetches the real page content server-side before analysing it.
-            </div>
-          )}
-
-          {result && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div>
-                  <span style={{ fontSize: '13px', color: '#00E5A0', fontWeight: 600 }}>
-                    Fischer Score: {result.fischerScore}/100
-                  </span>
-                  {captureMode && (
-                    <span style={{ marginLeft: '12px', fontSize: '11px', color: '#7A9BBD', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                      Capture: {captureMode}
-                    </span>
-                  )}
-                  {scrapeSucceeded === false && (
-                    <span style={{ marginLeft: '12px', fontSize: '12px', color: '#FF6B35' }}>
-                      ⚠ Page could not be fetched — this audit is data-only, see confidence note below
-                    </span>
-                  )}
-                </div>
-                <button onClick={promoteToBacklog} style={{
-                  padding: '8px 16px', background: 'transparent', border: '1px solid #1E3A5F',
-                  borderRadius: '6px', color: '#7A9BBD', fontSize: '12px', cursor: 'pointer'
-                }}>PROMOTE FRICTION POINTS TO BACKLOG</button>
-              </div>
-
-              <div style={{ ...CARD_STYLE }}>
-                <div style={{ color: '#FFD700', fontWeight: 700, marginBottom: '8px' }}>SUMMARY</div>
-                <p style={{ color: '#E8F0F8', fontSize: '14px', lineHeight: 1.6 }}>{result.summary}</p>
-                <p style={{ color: '#7A9BBD', fontSize: '12px', marginTop: '12px', fontStyle: 'italic' }}>
-                  Confidence note: {result.confidenceNote}
-                </p>
-              </div>
-
-              <div style={CARD_STYLE}>
-                <div style={{ color: '#FF4757', fontWeight: 700, marginBottom: '12px' }}>FRICTION POINTS</div>
-                {result.frictionPoints.map((fp, i) => (
-                  <div key={i} style={{ marginBottom: '16px', paddingBottom: '16px', borderBottom: '1px solid #1E3A5F' }}>
-                    <div style={{ color: SEVERITY_COLOR[fp.severity], fontWeight: 700, fontSize: '14px' }}>
-                      {i + 1}. {fp.title} — {fp.severity.toUpperCase()}
-                    </div>
-                    <div style={{ color: '#B8C8D8', fontSize: '13px', marginTop: '6px' }}><b>Location:</b> {fp.location}</div>
-                    <div style={{ color: '#B8C8D8', fontSize: '13px', marginTop: '4px' }}><b>Issue:</b> {fp.issue}</div>
-                    <div style={{ color: '#00E5A0', fontSize: '13px', marginTop: '4px' }}><b>Fix:</b> {fp.fix}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={CARD_STYLE}>
-                <div style={{ color: '#00E5A0', fontWeight: 700, marginBottom: '12px' }}>REVENUE IMPACT</div>
-                <p style={{ color: '#E8F0F8', fontSize: '13px' }}>
-                  Current: R{result.revenueImpact.currentMonthlyRevenue.toLocaleString()}/mo
-                  at {result.revenueImpact.currentConversionRate}% CVR
-                </p>
-                <p style={{ color: '#B8C8D8', fontSize: '13px', marginTop: '8px' }}>
-                  Conservative: +R{result.revenueImpact.conservativeAdditionalRevenue.toLocaleString()}/mo &nbsp;|&nbsp;
-                  Realistic: +R{result.revenueImpact.realisticAdditionalRevenue.toLocaleString()}/mo &nbsp;|&nbsp;
-                  Aggressive: +R{result.revenueImpact.aggressiveAdditionalRevenue.toLocaleString()}/mo
-                </p>
-                <p style={{ color: '#FFD700', fontSize: '13px', marginTop: '8px' }}>
-                  Highest priority: {result.revenueImpact.highestPriorityFix}
-                </p>
-              </div>
-
-              <div style={CARD_STYLE}>
-                <div style={{ color: '#A78BFA', fontWeight: 700, marginBottom: '12px' }}>A/B TEST HYPOTHESES</div>
-                {result.abTestHypotheses.map((t, i) => (
-                  <div key={i} style={{ marginBottom: '12px' }}>
-                    <div style={{ color: '#A78BFA', fontWeight: 700, fontSize: '13px' }}>TEST {i + 1}: {t.name}</div>
-                    <div style={{ color: '#B8C8D8', fontSize: '13px', marginTop: '4px' }}>{t.hypothesis}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        <div style={cardStyle}>
+          <div style={labelStyle}>Summary</div>
+          <p style={{ lineHeight: 1.6, marginTop: 0 }}>{r.summary}</p>
+          <p style={{ fontSize: 13, color: T.muted }}>{r.confidenceNote}</p>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Pill color={T.good}>Screens: {ds.screenshots?.desktop ?? 0} desktop / {ds.screenshots?.mobile ?? 0} mobile</Pill>
+            <Pill color={String(ds.pagespeed).startsWith('success') ? T.good : T.muted}>PageSpeed</Pill>
+            <Pill color={String(ds.ga4).startsWith('live') ? T.good : T.muted}>GA4 {String(ds.ga4).startsWith('live') ? 'live' : 'off'}</Pill>
+            <Pill color={String(ds.clarity).match(/^(live|stored)/) ? T.good : T.muted}>Clarity {String(ds.clarity).match(/^(live|stored)/) ? 'on' : 'off'}</Pill>
+          </div>
+          {r.dataGaps?.length > 0 && <p style={{ fontSize: 12, color: T.muted }}>Not assessed: {r.dataGaps.join(' · ')}</p>}
         </div>
       </div>
+
+      <div style={{ marginBottom: 14 }}><ClarityLinks projectId={clarityProject} pageUrl={audit.page_url} /></div>
+      <A11yCard a={audit.accessibility} />
+      {audit.tracking && (
+        <div style={{ ...cardStyle, borderColor: audit.tracking.healthy ? T.line : T.bad }}>
+          <div style={labelStyle}>Tracking check {audit.tracking.healthy ? '— healthy' : '— problems found'}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            <Pill color={audit.tracking.detected.ga4Hits ? T.good : T.bad}>GA4 {audit.tracking.detected.ga4MeasurementIds.join(', ') || 'missing'}</Pill>
+            <Pill color={audit.tracking.detected.gtmContainers.length ? T.good : T.muted}>GTM {audit.tracking.detected.gtmContainers.join(', ') || 'none'}</Pill>
+            <Pill color={audit.tracking.detected.clarityProjectIds.length ? T.good : T.warn}>Clarity {audit.tracking.detected.clarityProjectIds.join(', ') || 'none'}</Pill>
+            <Pill color={audit.tracking.detected.analyticsConsent === 'denied' ? T.bad : T.muted}>consent: {audit.tracking.detected.analyticsConsent}</Pill>
+            {audit.tracking.detected.metaPixel && <Pill>Meta pixel</Pill>}
+            {audit.tracking.detected.googleAdsIds.length > 0 && <Pill>Google Ads</Pill>}
+          </div>
+          {audit.tracking.issues.map((i: any) => (
+            <div key={i.code} style={{ fontSize: 13, padding: '4px 0' }}>
+              <Pill color={i.severity === 'high' ? T.bad : i.severity === 'medium' ? T.warn : T.muted}>{i.severity}</Pill> {i.message} <span style={{ color: T.muted }}>— {i.fix}</span>
+            </div>))}
+          {audit.tracking.events && <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>GA4 key events: {audit.tracking.events.filter((e: any) => e.isKeyEvent).map((e: any) => `${e.name} (${e.count})`).join(', ') || 'none'}</div>}
+        </div>
+      )}
+
+      {audit.page_diff?.changed && (
+        <div style={cardStyle}>
+          <div style={labelStyle}>Changes since previous audit</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14 }}>{audit.page_diff.changes.map((c: any, i: number) => <li key={i}><strong>{c.label}:</strong> {c.before && <span style={{ color: T.muted, textDecoration: 'line-through' }}>{c.before}</span>} {c.after && <span>{c.after}</span>}</li>)}</ul>
+        </div>
+      )}
+
+      {r.previousIssueFollowUp?.length > 0 && (
+        <div style={cardStyle}>
+          <div style={labelStyle}>Follow-up on previous audit</div>
+          {r.previousIssueFollowUp.map((f, i) => (
+            <div key={i} style={{ padding: '6px 0', borderBottom: `1px solid ${T.line}`, fontSize: 14 }}>
+              <Pill color={STATUS[f.status]}>{f.status.replace('_', ' ')}</Pill> <strong>{f.previousTitle}</strong>
+              <div style={{ color: T.muted, fontSize: 13 }}>{f.evidence}</div>
+            </div>))}
+        </div>
+      )}
+
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={labelStyle}>Findings ({r.frictionPoints.length})</div>
+          {audit.client_id && <Button kind="ghost" disabled={promoted} onClick={async () => { await api('/api/backlog/from-audit', { method: 'POST', json: { auditId: id, clientId: audit.client_id } }); setPromoted(true) }}>{promoted ? 'Added to backlog' : 'Add all to backlog'}</Button>}
+        </div>
+        {r.frictionPoints.length === 0 && <p style={{ color: T.muted }}>No evidence-backed problems found.</p>}
+        {r.frictionPoints.map((f, i) => <div key={i}><Finding f={f} />{audit.client_id && <div style={{ margin: '-4px 0 12px 15px' }}><MockupButton key={mockupFor('finding', i)?.id ?? `f${i}`} auditId={id} kind="finding" index={i} existing={mockupFor('finding', i)} /></div>}</div>)}
+        {r.unverifiedFindings?.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => setShowUnverified(s => !s)} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+              {showUnverified ? '▾' : '▸'} {r.unverifiedFindings.length} unverified finding(s) — excluded from client reports
+            </button>
+            {showUnverified && r.unverifiedFindings.map((f, i) => <Finding key={i} f={f} dim />)}
+          </div>
+        )}
+      </div>
+
+      {r.strengths?.length > 0 && (
+        <div style={cardStyle}>
+          <div style={labelStyle}>Working well — don&apos;t break these</div>
+          {r.strengths.map((s, i) => <div key={i} style={{ fontSize: 14, marginBottom: 6 }}><strong style={{ color: T.good }}>{s.title}</strong> <span style={{ color: T.muted }}>— {s.evidence}</span></div>)}
+        </div>
+      )}
+
+      <div style={cardStyle}>
+        <div style={labelStyle}>Screenshots</div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          {(['desktop', 'mobile'] as const).map(v => <Button key={v} kind={shotView === v ? 'primary' : 'ghost'} onClick={() => setShotView(v)}>{v} ({audit.screenshots?.[v]?.length ?? 0})</Button>)}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, maxHeight: 900, overflowY: 'auto', background: T.panel2, borderRadius: 8 }}>
+          {shots.length === 0 ? <p style={{ color: T.muted }}>No screenshots stored.</p> : shots.map((s: any) => (
+            <div key={s.index} style={{ position: 'relative', width: shotView === 'mobile' ? 390 : '100%', maxWidth: '100%' }}>
+              <span style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(0,0,0,.7)', fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>{shotView} section {s.index + 1}</span>
+              <img src={s.url} alt={`${shotView} section ${s.index + 1}`} style={{ width: '100%', display: 'block' }} />
+            </div>))}
+        </div>
+      </div>
+
+      {r.revenueImpact && r.revenueImpact.basis !== 'none' && r.revenueImpact.currentMonthlyRevenue > 0 && (
+        <div style={cardStyle}>
+          <div style={labelStyle}>Revenue opportunity ({r.revenueImpact.basis === 'ga4' ? 'from live GA4' : 'from manual figures'})</div>
+          <p style={{ fontSize: 13, color: T.muted, marginTop: 0 }}>{r.revenueImpact.monthlyTraffic.toLocaleString()} sessions/month × {r.revenueImpact.currentConversionRate}% × {money(r.revenueImpact.valuePerConversion)} = {money(r.revenueImpact.currentMonthlyRevenue)}/month today</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            {(['conservative', 'realistic', 'aggressive'] as const).map(k => (
+              <div key={k} style={{ background: T.panel2, borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase' }}>{k} (+{(r.revenueImpact as any)[`${k}LiftPct`]}%)</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: T.gold }}>+{money((r.revenueImpact as any)[`${k}AdditionalRevenue`])}/mo</div>
+              </div>))}
+          </div>
+          <p style={{ fontSize: 13, color: T.muted }}>{r.liftEstimate?.rationale}</p>
+          <p style={{ fontSize: 14 }}><strong>Highest priority:</strong> {r.highestPriorityFix} — {r.highestPriorityFixReason}</p>
+        </div>
+      )}
+
+      <div style={cardStyle}>
+        <div style={labelStyle}>A/B test hypotheses</div>
+        {r.abTestHypotheses.map((h, i) => (
+          <div key={i} style={{ borderTop: i ? `1px solid ${T.line}` : 'none', padding: '12px 0' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Pill color={T.gold}>P{h.priority}</Pill><strong style={{ flex: '1 1 240px' }}>{h.name}</strong>
+              <Pill>{h.device}</Pill><Pill>{h.effort} effort</Pill>
+              {audit.client_id && <Button kind="ghost" disabled={briefBusy !== null} onClick={() => createBrief(i)}>{briefBusy === i ? 'Creating…' : 'Create test brief'}</Button>}
+            </div>
+            <p style={{ fontSize: 14, margin: '8px 0' }}>{h.hypothesis}</p>
+            <div style={{ fontSize: 13, color: T.muted }}><strong>Control:</strong> {h.control}</div>
+            <div style={{ fontSize: 13, color: T.muted }}><strong>Variant:</strong> {h.variant}</div>
+            <div style={{ fontSize: 13, color: T.muted }}><strong>Metric:</strong> {h.primaryMetric} · expected +{h.expectedLiftPct}%</div>
+            {h.plan && <div style={{ fontSize: 13, color: h.plan.feasible ? T.good : T.warn, marginTop: 4 }}>{h.plan.note}</div>}
+            {audit.client_id && <div style={{ marginTop: 8 }}><MockupButton key={mockupFor('hypothesis', i)?.id ?? `h${i}`} auditId={id} kind="hypothesis" index={i} existing={mockupFor('hypothesis', i)} /></div>}
+          </div>))}
+      </div>
+
+      <div style={cardStyle}>
+        <div style={labelStyle}>Action plan</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+          {(['thisWeek', 'thisMonth', 'thisQuarter'] as const).map(k => (
+            <div key={k}><strong style={{ fontSize: 13 }}>{k === 'thisWeek' ? 'This week' : k === 'thisMonth' ? 'This month' : 'This quarter'}</strong>
+              <ul style={{ paddingLeft: 18, fontSize: 14 }}>{r.actionPlan[k].map((a, i) => <li key={i}>{a}</li>)}</ul></div>))}
+        </div>
+      </div>
+    </Page>
+  )
+}
+
+function AutoRefresh() {
+  useEffect(() => { const t = setTimeout(() => window.location.reload(), 10000); return () => clearTimeout(t) }, [])
+  return null
+}
+
+function Finding({ f, dim }: { f: FrictionPoint; dim?: boolean }) {
+  return (
+    <div style={{ borderLeft: `3px solid ${SEV[f.severity]}`, padding: '8px 12px', margin: '10px 0', opacity: dim ? 0.65 : 1, background: T.panel2, borderRadius: '0 8px 8px 0' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <strong>{f.title}</strong><Pill color={SEV[f.severity]}>{f.severity}</Pill><Pill>{f.confidence} confidence</Pill>
+        <span style={{ fontSize: 12, color: T.muted }}>{f.location}</span>
+      </div>
+      <div style={{ fontSize: 13, marginTop: 6 }}><span style={{ color: T.gold }}>Evidence</span> ({f.evidenceSources.join(', ')}): {f.evidence}</div>
+      <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>{f.issue} {f.whyItKillsConversion}</div>
+      <div style={{ fontSize: 14, marginTop: 6 }}><strong>Fix:</strong> {f.fix}</div>
+      {f.validationNote && <div style={{ fontSize: 12, color: T.warn, marginTop: 4 }}>{f.validationNote}</div>}
     </div>
   )
 }

@@ -93,3 +93,9 @@ test('parseHtml strips script/style tags from body text extraction', () => {
   const result = parseHtml(htmlWithScript, 'https://example.com/forester')
   assert.ok(!result.bodyTextSample.includes('should not appear'), 'script contents must not leak into extracted text')
 })
+
+test('adjacent elements do not run words together in body text', () => {
+  const c = parseHtml('<html><body><nav><a href="/">Home</a><a href="/c">Contact</a></nav><div>Solar</div><div>Panels</div></body></html>', 'https://a.com')
+  assert.match(c.bodyTextSample, /Home Contact/)
+  assert.match(c.bodyTextSample, /Solar Panels/)
+})

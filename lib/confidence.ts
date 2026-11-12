@@ -1,5 +1,4 @@
-import type { ScrapeResult } from './scraper'
-import type { ScreenshotResult } from './screenshot'
+import type { PageCapture, ViewportCapture } from './capture'
 
 export interface ConfidenceCheck {
   htmlOk: boolean
@@ -12,48 +11,65 @@ export interface ConfidenceCheck {
   }
 }
 
-// Below this word count, treat the scrape as too thin to audit reliably —
-// same threshold the scraper itself uses to flag likely JS-rendering gaps.
 const MIN_RELIABLE_WORD_COUNT = 50
 
-/**
- * Decides whether auto-capture actually got what Fischer needs, per piece
- * (HTML content, desktop screenshot, mobile screenshot) — not just pass/fail
- * on the whole audit. This is what lets the frontend ask for manual input on
- * ONLY the piece that failed, instead of an all-or-nothing manual mode.
- */
-export function assessConfidence(
-  scrapeResult: ScrapeResult,
-  screenshotResult: ScreenshotResult
-): ConfidenceCheck {
-  const reasons: ConfidenceCheck['reasons'] = {}
+// Bot-protection / error interstitials. If we screenshot one of these we'd be
+// auditing Cloudflare's challenge page, not the client's site.
+const BLOCK_PATTERNS = [
+  /just a moment/i, /attention required/i, /access denied/i, /verify you are human/i,
+  /checking your browser/i, /request blocked/i, /are you a robot/i, /captcha/i,
+  /403 forbidden/i, /service unavailable/i, /page not found/i, /^404\b/i
+]
 
-  let htmlOk = true
-  if (!scrapeResult.success) {
-    htmlOk = false
-    reasons.html = scrapeResult.error || 'Could not fetch the page.'
-  } else if (scrapeResult.content!.fetchedWithJs) {
-    htmlOk = false
-    reasons.html = 'Page appears to be JS-rendered — auto-fetch likely missed content that loads after the initial page load.'
-  } else if (scrapeResult.content!.wordCount < MIN_RELIABLE_WORD_COUNT) {
-    htmlOk = false
-    reasons.html = `Only ${scrapeResult.content!.wordCount} words extracted — too thin to audit reliably.`
-  }
-
-  const desktopOk = screenshotResult.shots.some(s => s.viewport === 'desktop')
-  if (!desktopOk) {
-    reasons.desktop = screenshotResult.errors.desktop || 'Desktop screenshot capture failed.'
-  }
-
-  const mobileOk = screenshotResult.shots.some(s => s.viewport === 'mobile')
-  if (!mobileOk) {
-    reasons.mobile = screenshotResult.errors.mobile || 'Mobile screenshot capture failed.'
-  }
-
-  return { htmlOk, desktopOk, mobileOk, reasons }
+export function looksBlocked(title: string | undefined, h1: string | null | undefined, wordCount: number): string | null {
+  const probe = `${title ?? ''} | ${h1 ?? ''}`
+  const hit = BLOCK_PATTERNS.find(p => p.test(probe))
+  if (hit && wordCount < 400) return `The page served a bot-protection or error screen ("${(title || h1 || '').slice(0, 60)}") instead of the real content.`
+  return null
 }
 
-/** True if every piece auto-capture needed is actually usable — no manual input required. */
+function viewportReason(v: ViewportCapture, blocked: string | null): string | undefined {
+  if (!v.ok || v.segments.length === 0) return v.error || `${v.viewport} screenshot capture failed.`
+  if (blocked) return blocked
+  return undefined
+}
+
+/**
+ * Decides, per piece, whether auto-capture got what Fischer needs. Only the
+ * pieces that failed are requested from the user as manual input.
+ *
+ * Text is only required when it couldn't be extracted AND we have no
+ * screenshots to read it from — an image-heavy page with few words is a
+ * legitimate page, not a failed capture.
+ */
+export function assessConfidence(capture: PageCapture): ConfidenceCheck {
+  const reasons: ConfidenceCheck['reasons'] = {}
+  const content = capture.content
+  const blocked = looksBlocked(content?.title, capture.desktop.layout?.h1AboveFold ?? null, content?.wordCount ?? 0)
+
+  const desktopReason = viewportReason(capture.desktop, blocked)
+  const mobileReason = viewportReason(capture.mobile, blocked)
+  if (desktopReason) reasons.desktop = desktopReason
+  if (mobileReason) reasons.mobile = mobileReason
+
+  let htmlOk = true
+  if (blocked) {
+    htmlOk = false
+    reasons.html = blocked
+  } else if (!content) {
+    htmlOk = false
+    reasons.html = capture.contentError || 'Could not extract page text.'
+  } else if (content.fetchedWithJs && desktopReason) {
+    htmlOk = false
+    reasons.html = 'Page appears to be JavaScript-rendered and the browser capture failed, so the text is incomplete.'
+  } else if (content.wordCount < MIN_RELIABLE_WORD_COUNT && desktopReason) {
+    htmlOk = false
+    reasons.html = `Only ${content.wordCount} words extracted and no screenshots to read from.`
+  }
+
+  return { htmlOk, desktopOk: !desktopReason, mobileOk: !mobileReason, reasons }
+}
+
 export function isFullyConfident(check: ConfidenceCheck): boolean {
   return check.htmlOk && check.desktopOk && check.mobileOk
 }

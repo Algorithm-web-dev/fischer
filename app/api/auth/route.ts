@@ -45,3 +45,20 @@ export async function DELETE(req: NextRequest) {
   await supabase.auth.signOut()
   return NextResponse.json({ ok: true })
 }
+
+/** PATCH { currentPassword, newPassword } — change your own password (e.g. replace a temporary one). */
+export async function PATCH(req: NextRequest) {
+  const supabase = createSupabaseServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return NextResponse.json({ error: 'Not authenticated.' }, { status: 401 })
+  const { currentPassword, newPassword } = await req.json()
+  if (typeof newPassword !== 'string' || newPassword.length < 10) {
+    return NextResponse.json({ error: 'Use at least 10 characters.' }, { status: 400 })
+  }
+  // Re-check the current password so a hijacked session can't silently change it.
+  const { error: wrong } = await supabase.auth.signInWithPassword({ email: user.email, password: String(currentPassword ?? '') })
+  if (wrong) return NextResponse.json({ error: 'Current password is incorrect.' }, { status: 400 })
+  const { error } = await supabase.auth.updateUser({ password: newPassword })
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  return NextResponse.json({ ok: true })
+}

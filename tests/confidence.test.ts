@@ -1,83 +1,65 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assessConfidence, isFullyConfident } from '../lib/confidence'
-import type { ScrapeResult } from '../lib/scraper'
-import type { ScreenshotResult } from '../lib/screenshot'
+import { assessConfidence, isFullyConfident, looksBlocked } from '../lib/confidence'
+import type { PageCapture, ViewportCapture } from '../lib/capture'
+import type { ScrapedContent } from '../lib/scraper'
 
-function goodScrape(): ScrapeResult {
+function content(over: Partial<ScrapedContent> = {}): ScrapedContent {
   return {
-    success: true,
-    content: {
-      url: 'https://example.com', title: 'Test', metaDescription: '',
-      headings: [], ctaButtons: [], forms: [], trustSignals: [],
-      bodyTextSample: 'a'.repeat(500), wordCount: 300, imageCount: 0,
-      hasVideoEmbed: false, fetchedWithJs: false
-    }
+    url: 'https://example.com', title: 'Acme Solar', metaDescription: '', headings: [], ctaButtons: [], forms: [],
+    trustSignals: [], bodyTextSample: 'a', wordCount: 300, imageCount: 0, hasVideoEmbed: false, fetchedWithJs: false, ...over
   }
 }
-
-function goodScreenshots(): ScreenshotResult {
+function vp(name: 'desktop' | 'mobile', ok = true, error?: string): ViewportCapture {
   return {
-    success: true,
-    shots: [
-      { viewport: 'desktop', width: 1440, height: 900, base64: 'abc' },
-      { viewport: 'mobile', width: 375, height: 812, base64: 'def' }
-    ],
-    errors: {}
+    viewport: name, ok, error, width: name === 'desktop' ? 1440 : 390, truncated: false, consoleErrors: [], failedRequests: 0,
+    segments: ok ? [{ index: 0, y: 0, height: 900, base64: 'abc' }] : []
   }
 }
+function cap(over: Partial<PageCapture> = {}): PageCapture {
+  return { desktop: vp('desktop'), mobile: vp('mobile'), content: content(), contentSource: 'rendered', ...over }
+}
 
-test('fully confident when scrape is rich and both screenshots succeed', () => {
-  const confidence = assessConfidence(goodScrape(), goodScreenshots())
-  assert.equal(isFullyConfident(confidence), true)
+test('fully confident when content and both viewports captured', () => {
+  const c = assessConfidence(cap())
+  assert.equal(isFullyConfident(c), true)
+  assert.deepEqual(c.reasons, {})
 })
 
-test('flags low confidence when scrape fails outright', () => {
-  const failedScrape: ScrapeResult = { success: false, error: 'HTTP 403' }
-  const confidence = assessConfidence(failedScrape, goodScreenshots())
-  assert.equal(confidence.htmlOk, false)
-  assert.equal(isFullyConfident(confidence), false)
-  assert.match(confidence.reasons.html!, /403/)
+test('a failed mobile capture only flags mobile', () => {
+  const c = assessConfidence(cap({ mobile: vp('mobile', false, 'Navigation timeout') }))
+  assert.equal(c.desktopOk, true)
+  assert.equal(c.mobileOk, false)
+  assert.equal(c.htmlOk, true)
+  assert.equal(c.reasons.mobile, 'Navigation timeout')
 })
 
-test('flags low confidence when scrape succeeds but content is thin', () => {
-  const thinScrape = goodScrape()
-  thinScrape.content!.wordCount = 10
-  const confidence = assessConfidence(thinScrape, goodScreenshots())
-  assert.equal(confidence.htmlOk, false)
-  assert.match(confidence.reasons.html!, /10 words/)
+test('thin text is fine when screenshots exist (image-heavy pages are legitimate)', () => {
+  const c = assessConfidence(cap({ content: content({ wordCount: 12 }) }))
+  assert.equal(c.htmlOk, true)
+  assert.equal(isFullyConfident(c), true)
 })
 
-test('flags low confidence when scraper detects likely JS-rendered content', () => {
-  const jsScrape = goodScrape()
-  jsScrape.content!.fetchedWithJs = true
-  const confidence = assessConfidence(jsScrape, goodScreenshots())
-  assert.equal(confidence.htmlOk, false)
-  assert.match(confidence.reasons.html!, /JS-rendered/)
+test('thin text with no desktop screenshot needs manual HTML', () => {
+  const c = assessConfidence(cap({ content: content({ wordCount: 12 }), desktop: vp('desktop', false, 'crash') }))
+  assert.equal(c.htmlOk, false)
+  assert.match(c.reasons.html!, /12 words/)
 })
 
-test('desktop and mobile screenshot confidence are independent', () => {
-  const partialShots: ScreenshotResult = {
-    success: true,
-    shots: [{ viewport: 'desktop', width: 1440, height: 900, base64: 'abc' }],
-    errors: { mobile: 'Navigation timeout' }
-  }
-  const confidence = assessConfidence(goodScrape(), partialShots)
-  assert.equal(confidence.desktopOk, true, 'desktop succeeded and should be independently OK')
-  assert.equal(confidence.mobileOk, false, 'mobile failed and should be independently flagged')
-  assert.equal(confidence.reasons.mobile, 'Navigation timeout')
-  assert.equal(isFullyConfident(confidence), false)
+test('no content at all flags html with the fetch error', () => {
+  const c = assessConfidence(cap({ content: null, contentSource: 'none', contentError: 'HTTP 500' }))
+  assert.equal(c.htmlOk, false)
+  assert.equal(c.reasons.html, 'HTTP 500')
 })
 
-test('a single missing piece is enough to fail isFullyConfident even if everything else is fine', () => {
-  const partialShots: ScreenshotResult = {
-    success: true,
-    shots: [{ viewport: 'desktop', width: 1440, height: 900, base64: 'abc' }],
-    errors: { mobile: 'blocked' }
-  }
-  const confidence = assessConfidence(goodScrape(), partialShots)
-  assert.equal(confidence.htmlOk, true)
-  assert.equal(confidence.desktopOk, true)
-  assert.equal(confidence.mobileOk, false)
-  assert.equal(isFullyConfident(confidence), false, 'one missing piece must fail the overall gate')
+test('bot-protection page fails every piece so we never audit a Cloudflare screen', () => {
+  const c = assessConfidence(cap({ content: content({ title: 'Just a moment...', wordCount: 20 }) }))
+  assert.equal(c.htmlOk, false)
+  assert.equal(c.desktopOk, false)
+  assert.equal(c.mobileOk, false)
+  assert.match(c.reasons.desktop!, /bot-protection/)
+})
+
+test('a long real page that mentions "captcha" is not treated as blocked', () => {
+  assert.equal(looksBlocked('How our captcha works', null, 1500), null)
 })
