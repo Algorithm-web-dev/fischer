@@ -5,7 +5,7 @@ import { detectImageType } from '@/lib/capture'
 import { createSupabaseServerClient } from '@/lib/supabase'
 import { auditRateLimit, checkRateLimit } from '@/lib/ratelimit'
 import { isValidHttpUrl } from '@/lib/validate'
-import { enqueueAudit } from '@/lib/queue'
+import { enqueueAudit, BACKGROUND_WORKER } from '@/lib/queue'
 import { logError } from '@/lib/errors'
 
 // Full-page capture at two viewports + PageSpeed + model call. Needs a Vercel
@@ -60,7 +60,8 @@ export async function POST(req: NextRequest) {
     }
     // Queue mode (recommended): returns at once, a worker runs it within ~1 minute.
     // Manual screenshots/HTML (resubmissions) always run inline.
-    if (input.async && !input.manualHtml && !input.manualScreenshotDesktop && !input.manualScreenshotMobile) {
+    // (Without the per-minute worker — Hobby plan — audits run immediately instead.)
+    if (input.async && BACKGROUND_WORKER && !input.manualHtml && !input.manualScreenshotDesktop && !input.manualScreenshotMobile) {
       const { async: _a, auditId: _id, ...jobInput } = input
       const id = await enqueueAudit(supabase, { input: jobInput, client, trigger: 'manual', createdBy: user.id })
       return NextResponse.json({ auditId: id, status: 'queued' }, { status: 202 })

@@ -15,6 +15,14 @@ import { logError } from './errors'
  */
 export const MAX_ATTEMPTS = 3
 
+/**
+ * true on Vercel Pro with the per-minute /api/cron/worker cron: audits people
+ * start are queued and picked up within a minute. false (default, Hobby
+ * plan): audits people start run immediately in the request, and only
+ * scheduled re-audits use the queue, processed by the daily cron.
+ */
+export const BACKGROUND_WORKER = process.env.FISCHER_BACKGROUND_WORKER === 'true'
+
 export async function enqueueAudit(supabase: SupabaseClient, job: {
   input: AuditInput
   client: ClientRow | null
