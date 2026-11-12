@@ -25,6 +25,12 @@ Fischer audits a client's pages the way a visitor sees them, backs every finding
 | **Background queue** | Audits are queued and run by a per-minute worker (`claim_next_audit`, `SKIP LOCKED`), in parallel, with 3 retries and crashed-job recovery. Scheduled re-audits run on `FISCHER_SCHEDULED_MODEL` (default Sonnet 5.5); manual audits use `FISCHER_MODEL` (default Opus 5.5). |
 | **CRM lead quality** | The CRM, Zapier or Make posts leads to `/api/leads/ingest` (per-client key, hashed; no personal data stored). Fischer reports qualified rate, win rate and revenue per lead by landing page and source. Real revenue per lead becomes the leak map's value per conversion. |
 | **Benchmarks + test library** | Anonymised conversion-rate medians by industry and device (min. 3 clients, last 3 months). A library of every concluded test, tagged by change type, with win rates. Both feed audits and test planning. |
+| **Mockups + live A/B tests** | "Show mockup" on any finding or test idea: Fischer applies the change to the live page in a browser (sanitised page edits) and shows before/after. A test's variant can run live through the tracking kit (`abTests: true`). Visitors are split and stay in their group, and the group goes to GA4 as `fischer_exp`, so results sync and significance is calculated. One live kit test per site. |
+| **Google connection** | One-click "Connect Google" per client (read-only GA4, Search Console, Ads). Search Console queries feed message-match checks. Google Ads spend per landing page shows how much budget lands on below-average pages. Service-account GA4 still works without it. |
+| **Backlog, guardrails, competitors** | Backlog board (Watching → Next → This month → Shipped, PXL/ICE ranked; shipping logs a change). Guardrail metrics checked daily. Competitor scoring and market-position synthesis. |
+| **Roles + client portal** | Team roles (admin / analyst / viewer) and client logins that see only their own reports. Enforced by database row-level security. Activity log, data export and permanent deletion for POPIA/GDPR requests. |
+| **Ops** | Claude cost per audit, client, feature and model (Admin). Error log. Smoke test for staging (`npm run smoke`). CI runs typecheck, tests, build and all migrations. |
+| **Reporting extras** | Agency branding on reports. Scheduled report emails (Resend). Accessibility check (axe-core, WCAG 2.1 AA) on every audit. Clarity recording/heatmap links. Site discovery from the sitemap (key pages, forms, broken pages). |
 
 ---
 
@@ -53,21 +59,35 @@ npm install
 
 ### 2. Supabase
 Run the migrations **in order** in the SQL editor:
-`0001` → `0002` → `0003` → `0004_tracking_reports_tests` → `0005_revenue_leaks` → `0006_tracking_check` → `0007_journeys_alerts` → `0008_job_queue` → `0009_leads`
+`0001` → … → `0014`, in filename order. They are verified against PostgreSQL 16 in CI.
 
-Migrations 0004–0009 are safe to re-run. All nine were verified against PostgreSQL 16.
+- **0011 replaces every access policy** (roles + client portal). All logins that exist when you run it become **admins**, so nobody is locked out. Add later team members under **Admin → Team**.
+- 0004 onwards are safe to re-run as a whole set. Don't re-run 0004–0010 on their own after 0011: they would re-add the old "any logged-in user" policies. Re-run 0011 afterwards if you ever do.
 
-Then create team accounts under Authentication → Users.
+Create your own login first (Authentication → Users), then run the migrations.
+
+After deploying, encrypt any Clarity tokens saved before encryption existed:
+```bash
+npx tsx --env-file=.env.local scripts/encrypt-secrets.ts
+```
 
 ### 3. Environment
 ```bash
 cp .env.local.example .env.local
 ```
-Required: `ANTHROPIC_API_KEY`, Supabase URL + anon + service-role keys, `CRON_SECRET`. Recommended: `GOOGLE_PAGESPEED_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_KEY` (GA4), Upstash (rate limiting), `FISCHER_PUBLIC_URL`, `ALERT_WEBHOOK_URL` (Slack/Teams incoming webhook). Optional: `FISCHER_MODEL`, `FISCHER_SCHEDULED_MODEL`, `FISCHER_REAUDIT_DAYS`.
+Required: `ANTHROPIC_API_KEY`, Supabase URL + anon + service-role keys, `CRON_SECRET`, `FISCHER_ENCRYPTION_KEY` (`openssl rand -base64 32`; encrypts stored credentials), `FISCHER_PUBLIC_URL`.
+Recommended: `GOOGLE_PAGESPEED_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_KEY` (GA4 fallback), `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` (one-click Google), `RESEND_API_KEY` (report emails), Upstash (rate limiting), `ALERT_WEBHOOK_URL`.
+Optional: `GOOGLE_ADS_DEVELOPER_TOKEN` (+ `GOOGLE_ADS_API_VERSION`), `FISCHER_MODEL`, `FISCHER_SCHEDULED_MODEL`, `FISCHER_REAUDIT_DAYS`, `ERROR_WEBHOOK=true`.
+
+Then check everything with a real run (costs one Claude call with `--audit`):
+```bash
+npm run smoke -- --url=https://a-client-page.co.za/ --client=<client id> --audit
+```
 
 ### 4. Hosting (Vercel)
 - **Pro plan needed.** Audits run up to 300s (full-page capture at two viewports + model analysis), and the monthly job runs hourly. Hobby caps functions at 60s and crons at once a day.
-- Cron schedules are in `vercel.json`: **worker (every minute)**, snapshots + leak maps + queuing re-audits (hourly), Clarity history (daily 02:15 UTC), journey checks (daily 03:20 UTC, each page weekly), guardrails (daily).
+- Cron schedules are in `vercel.json`: **worker (every minute)**, snapshots + leak maps + queuing re-audits (hourly), Clarity history (daily 02:15 UTC), journey checks (daily 03:20 UTC, each page weekly), guardrails (daily), report emails (daily 07:10 UTC, each client once a month on its send day).
+- **Google OAuth:** in Google Cloud, enable the Analytics Data, Analytics Admin, Search Console and Google Ads APIs. Create a Web OAuth client with redirect URI `{FISCHER_PUBLIC_URL}/api/google/callback`.
 - If Vercel Deployment Protection is on, PDF export needs `FISCHER_PUBLIC_URL` to point at a URL the function can reach (e.g. your production domain).
 
 ### 5. Run locally
@@ -81,13 +101,15 @@ For local screenshots, set `CHROME_EXECUTABLE_PATH` to your Chrome binary (the s
 ## Onboarding a client
 
 1. **Clients → Add client.** Enter the name, website and value per conversion (average order or lead value).
-2. **GA4:** add the property ID. Ask the client to add the service account email (from `GOOGLE_SERVICE_ACCOUNT_KEY`) as a **Viewer** in GA4 Admin → Property access management. Optionally set the conversion event (e.g. `generate_lead`); it must be marked as a key event in GA4.
+2. **Google:** Settings → **Connect Google** (sign in with an account that can see the client's GA4/Search Console/Ads), then pick the GA4 property, Search Console site and Ads account. *Without Google sign-in:* add the GA4 property ID and have the client add the service account email as a **Viewer** in GA4. Optionally set the conversion event (e.g. `generate_lead`); it must be a key event in GA4.
 3. **Clarity:** in Clarity → Settings → Data Export → *Generate new API token*, then paste the project ID and token.
 4. **Settings → Test connections** confirms GA4 access and stores the first day of Clarity data.
 5. **Settings → Tracking kit:** copy the snippet into the client's GTM (Custom HTML, All Pages), set the thank-you path, mark the lead event as a key event in GA4, and register `field_name` as a custom dimension.
 6. **Revenue leaks → Build leak map**, then **Track top 3 leaking pages** (or track pages by hand under Pages & audits). Tick *auto-track* in Settings to do this monthly.
 7. For each tracked page, choose a **journey** (lead or checkout) and click **Audit now** to set the baseline.
-8. **Lead quality → Create ingest key** and connect the CRM. Turn on `injectHiddenFields` in the tracking kit so every lead carries its landing page and UTMs.
+8. **Lead quality → Create ingest key** and connect the client's CRM (directly or via Zapier/Make). Turn on `injectHiddenFields` in the tracking kit so every lead carries its landing page and UTMs.
+9. **Pages & audits → Scan site** to find forms, checkout and broken pages you might have missed.
+10. **Settings → Client portal:** give the client a login (optional), and **Reports → Email the report:** add recipients and switch on the monthly send.
 
 ## The monthly cycle
 
@@ -98,11 +120,13 @@ For local screenshots, set `CHROME_EXECUTABLE_PATH` to your Chrome binary (the s
 | Every 30 days per page | Tracked pages are re-audited automatically, with follow-up on last month's issues and page-change detection. |
 | 1st–4th of the month | Last month's snapshot is built and refreshed while GA4 finalises late data. Last month's leak map and funnel are built, top leaks auto-tracked (if enabled), and a conversion-drop alert raised if needed. |
 | During the month | Move backlog items to *shipped* (logged as changes), run A/B tests, log manual changes. |
-| Report day | **Reports** tab → pick the month → *Create client link* or *Download PDF*. |
+| Report day | Sent automatically on each client's send day, or **Reports** tab → *Send now* / *Create client link* / *Download PDF*. Clients with logins also see every report in the portal. |
 
-## A/B test results from GA4 (optional)
+## A/B tests
 
-Entering visitor and conversion counts manually always works. To pull them automatically:
+**Run them with Fischer:** on a test, click *Build variant*, check the mockup, then click *Go live*. The site needs the tracking kit with `abTests: true`. Register `fischer_exp` as a **user-scoped** custom dimension in GA4 once, so *Sync from GA4* can read results.
+
+**Or with another tool:** entering visitor and conversion counts manually always works. To pull results from GA4:
 1. Make the testing tool write the visitor's variant to a **user property** (VWO, Convert, AB Tasty and Optimizely GA4 integrations can, or use `gtag('set', 'user_properties', { exp_variant: 'TEST12-B' })`).
 2. Register it in GA4 Admin → Custom definitions as a **user-scoped** custom dimension.
 3. On the test, set the dimension (`customUser:exp_variant`) and the control/variant values, then click **Sync from GA4**.
@@ -115,13 +139,17 @@ Entering visitor and conversion counts manually always works. To pull them autom
 |---|---|
 | `/` | Login |
 | `/clients` | Client list with integration status |
-| `/clients/[id]` | Dashboard: Overview (monthly table, score history), Pages & audits, Changes, A/B tests, Reports, Settings |
-| `/audit` | Run a one-off or client audit. `/audit?view=<id>` shows a stored audit. |
+| `/clients/[id]` | Dashboard: Overview, Revenue leaks, Lead quality, Pages & audits, Backlog, Changes, A/B tests, Guardrails, Competitors, Reports, Settings |
+| `/audit` | Run a one-off or client audit. `/audit?view=<id>` shows a stored audit (with mockups, accessibility, tracking). |
+| `/library` | Benchmarks and the test library |
+| `/admin` | Admins: branding, team, activity log, Claude cost, errors |
+| `/account` | Change your password |
+| `/portal` | Client logins: their monthly reports |
 | `/report/[token]` | Public client report (token-protected, printable) |
 
 ## API
 
-All routes need a team session except `/report/*` (share token), `/api/cron/*` (`CRON_SECRET`), `/api/leads/ingest` (ingest key) and `/fischer-tracking.js`.
+All routes need a team session (role-checked; viewers read-only, some admin-only) except `/report/*` (share token), `/api/cron/*` (`CRON_SECRET`), `/api/leads/ingest` (ingest key), `/api/kit/config` and `/fischer-tracking.js` (public).
 
 | Route | |
 |---|---|
@@ -143,6 +171,14 @@ All routes need a team session except `/report/*` (share token), `/api/cron/*` (
 | `GET/PATCH /api/tests/[id]` · `POST /api/tests/[id]/sync-ga4` | Test lifecycle, results + significance, GA4 pull |
 | `GET/POST/DELETE /api/reports/[clientId]` | Report data / create share link / revoke |
 | `GET /api/reports/[clientId]/pdf?period=YYYY-MM` | PDF download |
+| `GET/POST /api/reports/[clientId]/email` | Email history / send the report now |
+| `POST /api/mockups` · `POST /api/tests/[id]/variant` | Before/after mockup for a finding or hypothesis / build a test's live variant |
+| `GET /api/kit/config?host=` | Public: live tests for a site (read by the tracking kit) |
+| `GET /api/google/connect?clientId=` · `GET/PATCH/DELETE /api/clients/[id]/google` | Google sign-in / pick property, site, Ads account / disconnect |
+| `GET/POST /api/clients/[id]/discover` | Site scan |
+| `GET /api/clients/[id]/export` · `DELETE /api/clients/[id]` | Admin: export all client data / delete permanently |
+| `GET/POST/PATCH/DELETE /api/team` · `/api/clients/[id]/users` | Admin: team roles / client portal logins |
+| `GET/PATCH /api/settings` · `GET /api/usage` · `GET /api/errors` | Branding / Claude cost / error log |
 
 Unchanged: `/api/backlog`, `/api/backlog/from-audit`, `/api/backlog/[id]/pxl-score`, `/api/guardrails`, `/api/market-share`, `/api/audits/compare`, `/api/reports/[clientId]/draft`.
 
@@ -153,15 +189,18 @@ Unchanged: `/api/backlog`, `/api/backlog/from-audit`, `/api/backlog/[id]/pxl-sco
 ```bash
 npm test
 ```
-94 unit tests, no credentials needed: confidence gate (including bot-protection pages), the Clarity parser against the real response shape, statistics, finding validation and audit post-processing, page change detection, URL safety, GA4 helpers, HTML parsing, leak map maths (incl. no double counting and benchmark floors), tracking detection, funnels, journey issues, lead normalisation and quality, benchmarks and the test library.
+112 unit tests, no credentials needed: confidence gate (including bot-protection pages), the Clarity parser against the real response shape, statistics, finding validation and audit post-processing, page change detection, URL safety, GA4 helpers, HTML parsing, leak map maths (incl. no double counting and benchmark floors), tracking detection, funnels, journey issues, lead normalisation and quality, benchmarks and the test library, cost calculation, credential encryption, role routing, page-edit sanitising, Google helpers, discovery, branding, emails and accessibility.
 
-Also verified in this environment: full-page capture, the tracking check, the tracking kit (real browser) and both journey types against local test pages; all migrations and the queue's claim function (ordering, crash recovery, attempt limit, two-worker race) against PostgreSQL 16.
+Also verified here, on local test pages and a real PostgreSQL 16:
+- **In a browser:** full-page capture, the tracking check, the tracking kit, both journey types, mockups, the live A/B runner (incl. XSS stripping), site discovery and the axe check.
+- **In the database:** all migrations, the queue's claim function (ordering, crash recovery, attempt limit, two-worker race) and the access rules for admin, viewer, client user and stranger.
 
-Not covered by automated tests (needs live credentials): the end-to-end audit with a real model call, GA4/Clarity/PageSpeed API calls, Supabase writes, PDF rendering on Vercel.
+Not tested here (they need live credentials): real Claude calls, GA4/Clarity/PageSpeed/Search Console/Google Ads APIs, Google sign-in, Resend, Supabase Auth and Storage, PDF rendering on Vercel. Run `npm run smoke` on staging.
 
 ## Known limitations
 
-- **Single-tenant.** Any logged-in team member sees every client. That's fine for an agency team. Before letting clients or other agencies log in themselves, add an `agency_id` / `client_id`-scoped RLS model. (Clients can already view their reports via share links without an account.)
+- **One agency per install.** Team members see every client; client logins see only their own. Reselling Fischer to *other agencies* would need an extra `agency_id` layer.
+- **Live kit tests are client-side**, like most testing tools. The first view may hide the page for up to 0.7s while the variant loads. Very dynamic pages may need simpler edits.
 - **Funnels are open funnels** (users who reached each step's event), not strictly sequential. GA4's sequential funnel API is still alpha.
 - **Journey checks never submit,** so they prove the form is reachable and well built, not that submissions arrive. The tracking kit's lead event plus the conversion-drop alert cover that.
 - **Before/after ≠ causation.** Change impact compares 28-day windows, and seasonality and campaigns also move numbers. Reports say so. A/B tests are the controlled evidence.
